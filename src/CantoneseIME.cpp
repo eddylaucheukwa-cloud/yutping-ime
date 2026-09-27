@@ -1,0 +1,861 @@
+#include "CantoneseIME.h"
+#include <new>
+#include <cstdint>
+
+// ============================================================
+// Debug logging
+// ============================================================
+static void _Dbg(const wchar_t* fmt) {
+#ifdef _DEBUG
+    OutputDebugStringW(fmt);
+#else
+    (void)fmt;
+#endif
+}
+
+// ============================================================
+// Edit session helpers
+//   TSF forbids touching document text outside an edit session.
+//   We wrap each mutation in a tiny ITfEditSession implementation.
+// ============================================================
+namespace {
+
+// Generic edit session that runs a std::function under an edit cookie.
+class FuncEditSession : public ITfEditSession {
+public:
+    FuncEditSession(std::function<void(TfEditCookie)> fn)
+        : m_ref(1), m_fn(std::move(fn)) {}
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ITfEditSession)) {
+            *ppv = static_cast<ITfEditSession*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++m_ref; }
+    STDMETHODIMP_(ULONG) Release() override {
+        ULONG r = --m_ref;
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHODIMP DoEditSession(TfEditCookie ec) override {
+        m_fn(ec);
+        return S_OK;
+    }
+private:
+    LONG m_ref;
+    std::function<void(TfEditCookie)> m_fn;
+};
+
+// Convenience: request a synchronous read/write edit session
+bool RunEditSession(ITfContext* pic, TfClientId tid,
+                    std::function<void(TfEditCookie)> fn) {
+    if (!pic) { _Dbg(L"RunEditSession: pic=NULL\n"); return false; }
+    auto* session = new (std::nothrow) FuncEditSession(std::move(fn));
+    if (!session) return false;
+    HRESULT hr = E_FAIL;
+    HRESULT request = pic->RequestEditSession(tid, session,
+        TF_ES_SYNC | TF_ES_READWRITE, &hr);
+    wchar_t dbuf[80];
+    wsprintfW(dbuf, L"RunEditSession: hr=0x%08X\n", hr);
+    _Dbg(dbuf);
+    session->Release();
+    return SUCCEEDED(request) && SUCCEEDED(hr);
+}
+
+} // namespace
+
+// ============================================================
+// Construction
+// ============================================================
+CantoneseIME::CantoneseIME() {
+    extern LONG g_cDllRef;
+    InterlockedIncrement(&g_cDllRef);
+    m_candWnd = std::make_unique<CandidateWindow>();
+}
+
+CantoneseIME::~CantoneseIME() {
+    extern LONG g_cDllRef;
+    InterlockedDecrement(&g_cDllRef);
+}
+
+// ============================================================
+// IUnknown
+// ============================================================
+STDMETHODIMP CantoneseIME::QueryInterface(REFIID riid, void** ppv) {
+    if (!ppv) return E_POINTER;
+    if (IsEqualIID(riid, IID_IUnknown) ||
+        IsEqualIID(riid, IID_ITfTextInputProcessor)) {
+        *ppv = static_cast<ITfTextInputProcessor*>(this);
+    } else if (IsEqualIID(riid, IID_ITfTextInputProcessorEx)) {
+        *ppv = static_cast<ITfTextInputProcessorEx*>(this);
+    } else if (IsEqualIID(riid, IID_ITfThreadMgrEventSink)) {
+        *ppv = static_cast<ITfThreadMgrEventSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfKeyEventSink)) {
+        *ppv = static_cast<ITfKeyEventSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfCompositionSink)) {
+        *ppv = static_cast<ITfCompositionSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfTextLayoutSink)) {
+        *ppv = static_cast<ITfTextLayoutSink*>(this);
+    } else {
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    AddRef();
+    return S_OK;
+}
+
+STDMETHODIMP_(ULONG) CantoneseIME::AddRef() {
+    return ++m_refCount;
+}
+
+STDMETHODIMP_(ULONG) CantoneseIME::Release() {
+    LONG c = --m_refCount;
+    if (c == 0) delete this;
+    return c;
+}
+
+// ============================================================
+// Lifecycle
+// ============================================================
+STDMETHODIMP CantoneseIME::Activate(ITfThreadMgr* ptim, TfClientId tid) {
+    return ActivateEx(ptim, tid, 0);
+}
+
+STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD) {
+    if (!ptim) return E_INVALIDARG;
+    m_settings = LoadUserSettings();
+    m_pThreadMgr = ptim;
+    m_pThreadMgr->AddRef();
+    m_clientId = tid;
+    m_uiThreadId = GetCurrentThreadId();
+
+    m_candWnd->SetSelectCallback([this](int idx) {
+        _CommitCandidate(m_candPage * m_settings.pageSize + idx);
+    });
+    m_candWnd->SetPageCallback([this](int delta) {
+        if (delta > 0) _NextCandPage();
+        else _PrevCandPage();
+    });
+    extern HINSTANCE g_hInst;
+    CandidateWindow::RegisterClass(g_hInst);
+
+    // Sink for focus changes
+    ITfSource* pSource = nullptr;
+    if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSource)) && pSource) {
+        pSource->AdviseSink(IID_ITfThreadMgrEventSink,
+            static_cast<ITfThreadMgrEventSink*>(this), &m_threadMgrCookie);
+        pSource->Release();
+    }
+
+    // Keyboard sink
+    ITfKeystrokeMgr* pKeyMgr = nullptr;
+    if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr)) && pKeyMgr) {
+        pKeyMgr->AdviseKeyEventSink(m_clientId,
+            static_cast<ITfKeyEventSink*>(this), TRUE);
+        pKeyMgr->Release();
+    }
+
+    // Hidden marshaling window for background-thread callbacks
+    {
+        std::wstring className = L"YutpingMarshal_" +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(g_hInst));
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc   = _MarshalWndProc;
+        wc.hInstance      = g_hInst;
+        wc.lpszClassName  = className.c_str();
+        RegisterClassExW(&wc);
+        m_hMarshalWnd = CreateWindowExW(0, className.c_str(), L"", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, g_hInst, this);
+        if (m_hMarshalWnd)
+            SetWindowLongPtrW(m_hMarshalWnd, GWLP_USERDATA, (LONG_PTR)this);
+    }
+    if (!m_hMarshalWnd) {
+        HRESULT error = HRESULT_FROM_WIN32(GetLastError());
+        Deactivate();
+        return error;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_queryState->mutex);
+        m_queryState->window = m_hMarshalWnd;
+    }
+    ITfDocumentMgr* focus = nullptr;
+    if (SUCCEEDED(ptim->GetFocus(&focus)) && focus) {
+        ITfContext* context = nullptr;
+        if (SUCCEEDED(focus->GetTop(&context)) && context) {
+            _SetContext(context);
+            context->Release();
+        }
+        focus->Release();
+    }
+
+    return S_OK;
+}
+
+STDMETHODIMP CantoneseIME::Deactivate() {
+    _Reset();
+    {
+        std::lock_guard<std::mutex> lock(m_queryState->mutex);
+        m_queryState->window = nullptr;
+    }
+
+    ITfKeystrokeMgr* pKeyMgr = nullptr;
+    if (m_pThreadMgr &&
+        SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr)) && pKeyMgr) {
+        pKeyMgr->UnadviseKeyEventSink(m_clientId);
+        pKeyMgr->Release();
+    }
+
+    if (m_pThreadMgr && m_threadMgrCookie != TF_INVALID_COOKIE) {
+        ITfSource* pSource = nullptr;
+        if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSource)) && pSource) {
+            pSource->UnadviseSink(m_threadMgrCookie);
+            pSource->Release();
+        }
+        m_threadMgrCookie = TF_INVALID_COOKIE;
+    }
+
+    _SetContext(nullptr);
+    if (m_pThreadMgr) { m_pThreadMgr->Release(); m_pThreadMgr = nullptr; }
+    if (m_hMarshalWnd) { DestroyWindow(m_hMarshalWnd); m_hMarshalWnd = nullptr; }
+    m_clientId = TF_CLIENTID_NULL;
+    return S_OK;
+}
+
+// ============================================================
+// Focus tracking
+// ============================================================
+STDMETHODIMP CantoneseIME::OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr*) {
+    _Reset();
+    ITfContext* context = nullptr;
+    if (pdimFocus) {
+        pdimFocus->GetTop(&context);
+    }
+    _SetContext(context);
+    if (context) context->Release();
+    return S_OK;
+}
+
+void CantoneseIME::_SetContext(ITfContext* context) {
+    if (m_pContext && m_layoutCookie != TF_INVALID_COOKIE) {
+        ITfSource* source = nullptr;
+        if (SUCCEEDED(m_pContext->QueryInterface(IID_ITfSource, (void**)&source))) {
+            source->UnadviseSink(m_layoutCookie);
+            source->Release();
+        }
+    }
+    m_layoutCookie = TF_INVALID_COOKIE;
+    if (m_pContext) m_pContext->Release();
+    m_pContext = context;
+    m_caretValid = false;
+    if (m_pContext) {
+        m_pContext->AddRef();
+        ITfSource* source = nullptr;
+        if (SUCCEEDED(m_pContext->QueryInterface(IID_ITfSource, (void**)&source))) {
+            source->AdviseSink(IID_ITfTextLayoutSink,
+                static_cast<ITfTextLayoutSink*>(this), &m_layoutCookie);
+            source->Release();
+        }
+    }
+}
+
+STDMETHODIMP CantoneseIME::OnLayoutChange(ITfContext* context, TfLayoutCode code, ITfContextView*) {
+    // TSF may still hold a document lock during this callback. Read the new
+    // geometry after the callback returns to the host message loop.
+    if (context == m_pContext && code != TF_LC_DESTROY && !m_buffer.empty() && m_hMarshalWnd)
+        PostMessageW(m_hMarshalWnd, WM_LAYOUT_READY, 0, 0);
+    return S_OK;
+}
+
+// ============================================================
+// Keyboard
+// ============================================================
+
+// Chinese punctuation: OEM VK code → Chinese char
+// VK_OEM_1 (;:), VK_OEM_PLUS (+=), VK_OEM_COMMA (,<),
+// VK_OEM_MINUS (_-), VK_OEM_PERIOD (.>), VK_OEM_2 (/?),
+// VK_OEM_3 (`~), VK_OEM_4 ([{), VK_OEM_5 (\\|), VK_OEM_6 (]}),
+// VK_OEM_7 ('")
+static wchar_t VkToChinesePunct(WPARAM wp) {
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    switch (wp) {
+    case VK_OEM_PERIOD:  return shift ? L'。'  : L'。';   // . / >
+    case VK_OEM_COMMA:   return shift ? L'，'  : L'，';   // , / <
+    case VK_OEM_1:       return shift ? L'：'  : L'；';   // : / ;
+    case VK_OEM_2:       return shift ? L'？'  : L'？';   // ? / /
+    case VK_OEM_MINUS:   return shift ? L'＿'  : L'－';   // _ / -
+    case VK_OEM_PLUS:    return shift ? L'＋'  : L'＋';   // + / =
+    case VK_OEM_4:       return shift ? L'『'  : L'「';   // { / [
+    case VK_OEM_6:       return shift ? L'』'  : L'」';   // } / ]
+    case VK_OEM_7:       return shift ? L'」'  : L'「';   // " / '
+    case VK_OEM_5:       return shift ? L'｜'  : L'、';   // pipe / backslash
+    case VK_OEM_102:     return L'《';
+    case VK_OEM_3:       return shift ? L'～'  : L'～';   // ~ / `
+    case '1': case '2': case '3': case '4': case '5':
+    case '6': case '7': case '8': case '9':
+        return 0;   // digits: don't map, used for candidate selection
+    case '0': case VK_SPACE: case VK_RETURN:
+    case VK_BACK: case VK_ESCAPE:
+    case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN:
+    case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT:
+    case VK_INSERT: case VK_DELETE: case VK_TAB:
+        return 0;
+    default:
+        // Only map real OEM punctuation above. Function keys (VK_F1..F24 =
+        // 0x70..0x87) and numpad keys (0x60..0x69) also fall inside the old
+        // 0x20..0x7E test, which is why F5 was being swallowed as U+FF55.
+        return 0;
+    }
+}
+
+// Which keys does the IME want to consume?
+bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
+    // In English mode, let everything pass through
+    if (m_englishMode) return false;
+
+    bool composing = !m_buffer.empty();
+
+    // Chinese mode: letters start/update composition
+    if (wp >= 'A' && wp <= 'Z') return true;
+
+    // Chinese mode: punctuation keys get mapped to Chinese
+    if (!composing && m_settings.chinesePunctuation && VkToChinesePunct(wp)) return true;
+
+    if (composing) {
+        if (wp == VK_OEM_7) return true; // apostrophe separates syllables
+        if (wp == VK_BACK || wp == VK_ESCAPE || wp == VK_SPACE || wp == VK_RETURN)
+            return true;
+        if (wp >= '1' && wp <= ('0' + m_settings.pageSize))
+            return true;
+        if (!m_candidates.empty()) {
+            switch (wp) {
+            case VK_OEM_PLUS: case VK_OEM_PERIOD: case VK_OEM_6:
+            case VK_NEXT:     case VK_DOWN: case VK_RIGHT:
+            case VK_OEM_MINUS: case VK_OEM_COMMA: case VK_OEM_4:
+            case VK_PRIOR:    case VK_UP:   case VK_LEFT:
+                return true;   // paging keys
+            }
+        }
+    }
+    return false;
+}
+
+STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM, BOOL* pfEaten) {
+    m_settings = LoadUserSettings();
+    wchar_t buf[80];
+    wsprintfW(buf, L"OnTestKeyDown: VK=0x%X english=%d composing=%d\n", (int)wp, m_englishMode, !m_buffer.empty());
+    _Dbg(buf);
+    if (wp != VK_SHIFT) m_shiftPending = false;
+    // Ask TSF to deliver the Shift event, then let Windows receive it as a
+    // modifier; the mode change happens only when Shift is released alone.
+    if (wp == VK_SHIFT) {
+        *pfEaten = m_settings.f12Toggle ? FALSE : TRUE;
+        return S_OK;
+    }
+    // Modifier keys held → let it pass (e.g. Ctrl+C)
+    if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) {
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+    if (wp == VK_F12 && m_settings.f12Toggle) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+    *pfEaten = _IsKeyEaten(wp) ? TRUE : FALSE;
+    wsprintfW(buf, L"  eaten=%d punct=%d\n", *pfEaten, (int)VkToChinesePunct(wp));
+    _Dbg(buf);
+    return S_OK;
+}
+
+STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfEaten) {
+    if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) {
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+
+    if (wp == VK_SHIFT) {
+        m_shiftPending = !m_settings.f12Toggle;
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+
+    if (wp == VK_F12 && m_settings.f12Toggle) {
+        _ToggleMode(pic);
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+
+    if (!_IsKeyEaten(wp)) {
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+    *pfEaten = TRUE;
+
+    bool composing = !m_buffer.empty();
+
+    // Letter → append to buffer (always lowercase for composition)
+    if (wp >= 'A' && wp <= 'Z') {
+        wchar_t ch = (wchar_t)(wp - 'A' + 'a');
+        m_buffer += ch;
+        RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
+            _StartOrUpdateComposition(ec, pic, m_buffer);
+            _CaptureCaretPos(ec, pic);   // same cookie — no nested-session lock
+        });
+        _RequestQuery();
+        return S_OK;
+    }
+
+    if (wp == VK_OEM_7 && composing) {
+        m_buffer += L'\'';
+        RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
+            _StartOrUpdateComposition(ec, pic, m_buffer);
+            _CaptureCaretPos(ec, pic);
+        });
+        _RequestQuery();
+        return S_OK;
+    }
+
+    // Chinese punctuation → insert directly (no composition needed)
+    if (!composing && m_settings.chinesePunctuation) {
+        wchar_t zh = VkToChinesePunct(wp);
+        wchar_t logbuf[80];
+        wsprintfW(logbuf, L"  punct: VK=0x%X zh=U+%04X\n", (int)wp, (int)zh);
+        _Dbg(logbuf);
+        if (zh) {
+            RunEditSession(pic, m_clientId, [this, pic, zh](TfEditCookie ec) {
+                _InsertText(ec, pic, std::wstring(1, zh));
+            });
+            return S_OK;
+        }
+    }
+
+    if (!composing) { *pfEaten = FALSE; return S_OK; }
+
+    switch (wp) {
+    case VK_BACK:
+        m_buffer.pop_back();
+        if (m_buffer.empty()) {
+            RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
+                _EndComposition(ec, pic, L"");
+            });
+            _Reset();
+        } else {
+            RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
+                _StartOrUpdateComposition(ec, pic, m_buffer);
+                _CaptureCaretPos(ec, pic);
+            });
+            _RequestQuery();
+        }
+        break;
+
+    case VK_ESCAPE:
+        RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
+            _EndComposition(ec, pic, L"");
+        });
+        _Reset();
+        break;
+
+    case VK_SPACE:
+        // commit first candidate (or raw buffer if none)
+        if (!m_candidates.empty())
+            _CommitCandidate(0);
+        else {
+            std::wstring raw = m_buffer;
+            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
+                _EndComposition(ec, pic, raw);
+            })) _Reset();
+        }
+        break;
+
+    case VK_RETURN:
+        // Spec: Enter commits the raw romaji (English), Space picks a candidate.
+        if (composing) {
+            std::wstring raw = m_buffer;
+            wchar_t dbuf[80];
+            wsprintfW(dbuf, L"RETURN: commit raw=%s\n", raw.c_str());
+            _Dbg(dbuf);
+            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
+                _EndComposition(ec, pic, raw);
+            })) _Reset();
+        } else {
+            *pfEaten = FALSE;
+            return S_OK;
+        }
+        break;
+
+    case VK_OEM_PLUS:    // =
+    case VK_OEM_PERIOD:  // .
+    case VK_OEM_6:       // ]
+    case VK_NEXT:        // Page Down
+    case VK_DOWN:
+    case VK_RIGHT:
+        if (composing && !m_candidates.empty()) _NextCandPage();
+        break;
+
+    case VK_OEM_MINUS:   // -
+    case VK_OEM_COMMA:   // ,
+    case VK_OEM_4:       // [
+    case VK_PRIOR:       // Page Up
+    case VK_UP:
+    case VK_LEFT:
+        if (composing && !m_candidates.empty()) _PrevCandPage();
+        break;
+
+    default:
+        if (wp >= '1' && wp <= ('0' + m_settings.pageSize)) {
+            int idx = (int)(wp - '1') + m_candPage * m_settings.pageSize;
+            if (idx < (int)m_candidates.size())
+                _CommitCandidate(idx);
+        }
+        break;
+    }
+    return S_OK;
+}
+
+STDMETHODIMP CantoneseIME::OnTestKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* pfEaten) {
+    *pfEaten = wp == VK_SHIFT && !m_settings.f12Toggle ? TRUE : FALSE;
+    return S_OK;
+}
+STDMETHODIMP CantoneseIME::OnKeyUp(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfEaten) {
+    if (wp == VK_SHIFT && m_shiftPending) {
+        m_shiftPending = false;
+        _ToggleMode(pic);
+    }
+    *pfEaten = FALSE;
+    return S_OK;
+}
+
+bool CantoneseIME::_ToggleMode(ITfContext* pic) {
+    if (!m_buffer.empty()) {
+        if (!m_candidates.empty()) _CommitCandidate(0);
+        else {
+            const std::wstring raw = m_buffer;
+            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
+                _EndComposition(ec, pic, raw);
+            })) _Reset();
+        }
+        if (!m_buffer.empty()) return false;
+    }
+    m_englishMode = !m_englishMode;
+    return true;
+}
+STDMETHODIMP CantoneseIME::OnPreservedKey(ITfContext*, REFGUID, BOOL* pfEaten) {
+    *pfEaten = FALSE;
+    return S_OK;
+}
+
+// ============================================================
+// Composition
+// ============================================================
+STDMETHODIMP CantoneseIME::OnCompositionTerminated(TfEditCookie, ITfComposition* pComposition) {
+    if (m_pComposition) {
+        m_pComposition->Release();
+        m_pComposition = nullptr;
+    }
+    _Reset();
+    return S_OK;
+}
+
+void CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
+    if (!pic) return;
+
+    if (!m_pComposition) {
+        // Start a new composition at the current selection
+        ITfInsertAtSelection* pInsert = nullptr;
+        if (FAILED(pic->QueryInterface(IID_ITfInsertAtSelection, (void**)&pInsert)) || !pInsert)
+            return;
+
+        ITfRange* pRange = nullptr;
+        if (SUCCEEDED(pInsert->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &pRange)) && pRange) {
+            ITfContextComposition* pCtxComp = nullptr;
+            if (SUCCEEDED(pic->QueryInterface(IID_ITfContextComposition, (void**)&pCtxComp)) && pCtxComp) {
+                pCtxComp->StartComposition(ec, pRange,
+                    static_cast<ITfCompositionSink*>(this), &m_pComposition);
+                pCtxComp->Release();
+            }
+            pRange->Release();
+        }
+        pInsert->Release();
+    }
+
+    if (!m_pComposition) return;
+
+    // Replace composition range text
+    ITfRange* pRange = nullptr;
+    if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
+        pRange->SetText(ec, 0, text.c_str(), (LONG)text.length());
+
+        // Underline the composition to show it's pending
+        ITfProperty* pProp = nullptr;
+        if (SUCCEEDED(pic->GetProperty(GUID_PROP_ATTRIBUTE, &pProp)) && pProp) {
+            // (display attribute wiring omitted in POC — text still shows underlined
+            //  by default composition rendering in most controls)
+            pProp->Release();
+        }
+
+        // Move caret to end of composition
+        ITfRange* pEnd = nullptr;
+        if (SUCCEEDED(pRange->Clone(&pEnd)) && pEnd) {
+            pEnd->Collapse(ec, TF_ANCHOR_END);
+            TF_SELECTION sel;
+            sel.range = pEnd;
+            sel.style.ase = TF_AE_NONE;
+            sel.style.fInterimChar = FALSE;
+            pic->SetSelection(ec, 1, &sel);
+            pEnd->Release();
+        }
+        pRange->Release();
+    }
+}
+
+void CantoneseIME::_EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText) {
+    wchar_t dbuf[120];
+    wsprintfW(dbuf, L"EndComposition: comp=%p text=%s\n", m_pComposition, commitText.c_str());
+    _Dbg(dbuf);
+    if (!m_pComposition) {
+        if (!commitText.empty()) _InsertText(ec, pic, commitText);
+        return;
+    }
+
+    ITfRange* pRange = nullptr;
+    if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
+        // Replace the composition text with the committed characters
+        pRange->SetText(ec, 0, commitText.c_str(), (LONG)commitText.length());
+
+        // Move selection to end so typing continues after the committed text
+        ITfRange* pEnd = nullptr;
+        if (SUCCEEDED(pRange->Clone(&pEnd)) && pEnd) {
+            pEnd->Collapse(ec, TF_ANCHOR_END);
+            TF_SELECTION sel;
+            sel.range = pEnd;
+            sel.style.ase = TF_AE_NONE;
+            sel.style.fInterimChar = FALSE;
+            pic->SetSelection(ec, 1, &sel);
+            pEnd->Release();
+        }
+        pRange->Release();
+    }
+
+    // EndComposition can synchronously invoke OnCompositionTerminated. Detach
+    // our pointer first so the callback cannot release it a second time.
+    ITfComposition* composition = m_pComposition;
+    m_pComposition = nullptr;
+    composition->EndComposition(ec);
+    composition->Release();
+}
+
+// Insert text directly at cursor (no composition needed)
+void CantoneseIME::_InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
+    if (!pic) return;
+    ITfInsertAtSelection* pInsert = nullptr;
+    if (FAILED(pic->QueryInterface(IID_ITfInsertAtSelection, (void**)&pInsert)) || !pInsert)
+        return;
+
+    ITfRange* pRange = nullptr;
+    if (SUCCEEDED(pInsert->InsertTextAtSelection(ec, 0, text.c_str(),
+            (LONG)text.length(), &pRange)) && pRange) {
+        // Move caret past inserted text
+        pRange->Collapse(ec, TF_ANCHOR_END);
+        TF_SELECTION sel;
+        sel.range = pRange;
+        sel.style.ase = TF_AE_NONE;
+        sel.style.fInterimChar = FALSE;
+        pic->SetSelection(ec, 1, &sel);
+        pRange->Release();
+    }
+    pInsert->Release();
+}
+
+// ============================================================
+// Candidate query & window
+// ============================================================
+void CantoneseIME::_RequestQuery() {
+    const std::wstring snapshot = m_buffer;
+    m_candPage = 0;  // reset to first page on new query
+    m_candidates.clear();
+    m_queryPending = true;
+    _UpdateCandidateWindow();
+    const auto state = m_queryState;
+    unsigned long long generation;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        generation = ++state->generation;
+        state->ready = false;
+    }
+    GoogleInputAPI::QueryAsync(snapshot, [state, generation](CandidateResult result) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (generation != state->generation || !state->window) return;
+        state->result = std::move(result);
+        state->ready = true;
+        PostMessageW(state->window, WM_CANDIDATES_READY, 0, 0);
+    });
+}
+
+void CantoneseIME::_ReceiveCandidates() {
+    {
+        std::lock_guard<std::mutex> lock(m_queryState->mutex);
+        if (!m_queryState->ready) return;
+        m_candidates = std::move(m_queryState->result.candidates);
+        m_cached = m_queryState->result.cached;
+        m_offline = m_queryState->result.offline;
+        m_queryState->ready = false;
+    }
+    m_queryPending = false;
+    if (m_settings.learnChoices) RankCandidates(m_buffer, m_candidates);
+    m_candPage = 0;
+    _UpdateCandidateWindow();
+}
+
+void CantoneseIME::_NextCandPage() {
+    if (m_candidates.empty()) return;
+    int totalPages = ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize;
+    wchar_t dbuf[110];
+    wsprintfW(dbuf, L"NextPage: cands=%d perPage=%d totalPages=%d page=%d\n",
+        (int)m_candidates.size(), m_settings.pageSize, totalPages, m_candPage);
+    _Dbg(dbuf);
+    if (totalPages <= 1) return;
+    m_candPage = (m_candPage + 1) % totalPages;
+    _UpdateCandidateWindow();
+}
+
+void CantoneseIME::_PrevCandPage() {
+    if (m_candidates.empty()) return;
+    int totalPages = ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize;
+    if (totalPages <= 1) return;
+    m_candPage = (m_candPage + totalPages - 1) % totalPages;
+    _UpdateCandidateWindow();
+}
+
+void CantoneseIME::_UpdateCandidateWindow() {
+    if (m_buffer.empty()) {
+        m_candWnd->Hide();
+        return;
+    }
+    // Extract current page of candidates
+    int start = m_candPage * m_settings.pageSize;
+    int end = min(start + m_settings.pageSize, (int)m_candidates.size());
+    std::vector<Candidate> page(m_candidates.begin() + start, m_candidates.begin() + end);
+
+    const bool hadCaret = m_caretValid;
+    const POINT previousCaret = m_lastCaretPt;
+    _RefreshCaretPos();
+    if (!m_caretValid && hadCaret) {
+        m_lastCaretPt = previousCaret;
+        m_caretValid = true;
+    }
+    if (!m_caretValid) { m_candWnd->Hide(); return; }
+    m_candWnd->Show(m_buffer, page, m_lastCaretPt, m_candPage + 1,
+        (std::max)(1, ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize),
+        m_queryPending, m_cached, m_offline);
+}
+
+void CantoneseIME::_CommitCandidate(int index) {
+    if (index < 0 || index >= (int)m_candidates.size()) return;
+    std::wstring text = m_candidates[index].text;
+    std::wstring spelling = m_buffer;
+    ITfContext* pic = m_pContext;
+    wchar_t dbuf[120];
+    wsprintfW(dbuf, L"CommitCandidate[%d]: text=%s ctx=%p comp=%p\n",
+        index, text.c_str(), pic, m_pComposition);
+    _Dbg(dbuf);
+    if (m_pComposition) {
+        if (!RunEditSession(pic, m_clientId, [this, pic, text](TfEditCookie ec) {
+            _EndComposition(ec, pic, text);
+        })) return;
+    } else {
+        // No composition active — insert text directly
+        if (!RunEditSession(pic, m_clientId, [this, pic, text](TfEditCookie ec) {
+            _InsertText(ec, pic, text);
+        })) return;
+    }
+    if (m_settings.learnChoices) RememberSelection(spelling, text);
+    _Reset();
+}
+
+void CantoneseIME::_Reset() {
+    {
+        std::lock_guard<std::mutex> lock(m_queryState->mutex);
+        ++m_queryState->generation;
+        m_queryState->ready = false;
+    }
+    m_buffer.clear();
+    m_candidates.clear();
+    m_queryPending = false;
+    m_cached = m_offline = false;
+    m_candPage = 0;
+    m_caretValid = false;
+    if (m_candWnd) m_candWnd->Hide();
+}
+
+// Capture caret position while we already hold an edit cookie.
+// Nested RunEditSession would fail with TF_E_LOCKED (0x80040209), which is why
+// the old code always fell back to {100,100}.
+bool CantoneseIME::_CaptureCaretPos(TfEditCookie ec, ITfContext* pic) {
+    if (!pic) return false;
+    TF_SELECTION sel;
+    ULONG fetched = 0;
+    if (SUCCEEDED(pic->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched) {
+        ITfContextView* pView = nullptr;
+        if (SUCCEEDED(pic->GetActiveView(&pView)) && pView) {
+            RECT rc;
+            BOOL clipped;
+            if (SUCCEEDED(pView->GetTextExt(ec, sel.range, &rc, &clipped))
+                && !clipped && (rc.left || rc.top || rc.right || rc.bottom)) {
+                m_lastCaretPt.x = rc.left;
+                m_lastCaretPt.y = rc.bottom;
+                m_caretValid = true;
+                pView->Release();
+                sel.range->Release();
+                return true;
+            }
+            pView->Release();
+        }
+        sel.range->Release();
+    }
+    return false;
+}
+
+void CantoneseIME::_RefreshCaretPos() {
+    if (!m_pContext) return;
+    // Layout callbacks arrive after composition text is rendered. A read-only
+    // session here uses the current selection and yields screen coordinates.
+    m_caretValid = false;
+    auto* context = m_pContext;
+    auto* session = new (std::nothrow) FuncEditSession([this, context](TfEditCookie ec) {
+        _CaptureCaretPos(ec, context);
+    });
+    if (session) {
+        HRESULT sessionResult = E_FAIL;
+        context->RequestEditSession(m_clientId, session, TF_ES_SYNC | TF_ES_READ, &sessionResult);
+        session->Release();
+    }
+    if (m_caretValid) return;
+    GUITHREADINFO info = { sizeof(info) };
+    HWND foreground = GetForegroundWindow();
+    if (foreground && GetGUIThreadInfo(GetWindowThreadProcessId(foreground, nullptr), &info)
+        && info.hwndCaret) {
+        POINT point = { info.rcCaret.left, info.rcCaret.bottom };
+        if (ClientToScreen(info.hwndCaret, &point)) {
+            m_lastCaretPt = point;
+            m_caretValid = true;
+        }
+    }
+}
+
+LRESULT CALLBACK CantoneseIME::_MarshalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_CANDIDATES_READY) {
+        auto* self = reinterpret_cast<CantoneseIME*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (self) self->_ReceiveCandidates();
+        return 0;
+    }
+    if (msg == WM_LAYOUT_READY) {
+        auto* self = reinterpret_cast<CantoneseIME*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (self && !self->m_buffer.empty()) self->_UpdateCandidateWindow();
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}

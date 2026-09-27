@@ -1,0 +1,15 @@
+# Build products and local state
+build/
+build-*/
+*.log
+.vs/
+.idea/
+.vscode/
+.claude/
+.codex/
+AGENTS.md
+install/
+
+# Keep only the single installer end users need.
+dist/*
+!dist/YutpingSetup.exe
