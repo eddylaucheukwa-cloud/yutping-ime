@@ -6,7 +6,7 @@ int main() {
     const std::wstring original = L"你可";
     RememberSelection(spelling, preferred);
     RememberSelection(spelling, preferred);
-    std::vector<Candidate> candidates = {{original, L""}, {preferred, L""}};
+    std::vector<Candidate> candidates = {{original, L"first", 3}, {preferred, L"second", 5}};
     RankCandidates(spelling, candidates);
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\YutpingIME\\Selections", 0,
@@ -15,5 +15,6 @@ int main() {
         RegCloseKey(key);
     }
     return candidates.size() == 2 && candidates[0].text == preferred &&
-        candidates[1].text == original ? 0 : 1;
+        candidates[1].text == original && candidates[0].matchedLength == 5 &&
+        candidates[1].matchedLength == 3 ? 0 : 1;
 }

@@ -31,4 +31,5 @@ constexpr int CANDS_PER_PAGE = 6;
 struct Candidate {
     std::wstring text;
     std::wstring annotation;
+    size_t matchedLength = 0; // Input characters consumed; 0 means unspecified.
 };

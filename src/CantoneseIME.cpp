@@ -280,8 +280,7 @@ STDMETHODIMP CantoneseIME::OnLayoutChange(ITfContext* context, TfLayoutCode code
 // VK_OEM_MINUS (_-), VK_OEM_PERIOD (.>), VK_OEM_2 (/?),
 // VK_OEM_3 (`~), VK_OEM_4 ([{), VK_OEM_5 (\\|), VK_OEM_6 (]}),
 // VK_OEM_7 ('")
-static wchar_t VkToChinesePunct(WPARAM wp) {
-    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+static wchar_t VkToChinesePunct(WPARAM wp, bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0) {
     switch (wp) {
     case VK_OEM_PERIOD:  return shift ? L'。'  : L'。';   // . / >
     case VK_OEM_COMMA:   return shift ? L'，'  : L'，';   // , / <
@@ -319,6 +318,11 @@ bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
 
     bool composing = !m_buffer.empty();
 
+    // Text typed after a deferred selection must wait too. Otherwise the host
+    // can insert it inside the old composition and the result replaces it.
+    if ((m_deferredCandidate >= 0 || !m_queuedKeys.empty()) &&
+        ((wp >= '0' && wp <= '9') || wp == VK_TAB || VkToChinesePunct(wp))) return true;
+
     // Chinese mode: letters start/update composition
     if (wp >= 'A' && wp <= 'Z') return true;
 
@@ -331,7 +335,7 @@ bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
             return true;
         if (wp >= '1' && wp <= ('0' + m_settings.pageSize))
             return true;
-        if (!m_candidates.empty()) {
+        if (!m_candidates.empty() || m_queryPending) {
             switch (wp) {
             case VK_OEM_PLUS: case VK_OEM_PERIOD: case VK_OEM_6:
             case VK_NEXT:     case VK_DOWN: case VK_RIGHT:
@@ -344,15 +348,38 @@ bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
     return false;
 }
 
-STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM, BOOL* pfEaten) {
+static bool IsShiftKey(WPARAM wp) {
+    return wp == VK_SHIFT || wp == VK_LSHIFT || wp == VK_RSHIFT;
+}
+
+void CantoneseIME::_ObserveShiftDown(WPARAM wp, LPARAM lp, bool modifiers, ULONGLONG now) {
+    if (!IsShiftKey(wp)) { m_shiftPending = false; return; }
+    if (lp & (LPARAM(1) << 30)) return; // Auto-repeat must not re-arm a used Shift.
+    m_shiftPressedAt = now;
+    m_shiftPending = !m_settings.f12Toggle && !modifiers;
+    // A letter may already be held when Shift is pressed for uppercase.
+    for (int key = VK_BACK; m_shiftPending && key < 256; ++key) {
+        if (!IsShiftKey(key) && (GetKeyState(key) & 0x8000)) m_shiftPending = false;
+    }
+}
+
+bool CantoneseIME::_ReleaseShift(ULONGLONG now) {
+    const bool toggle = m_shiftPending && !m_settings.f12Toggle &&
+        now - m_shiftPressedAt <= 300;
+    m_shiftPending = false;
+    return toggle;
+}
+
+STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM lp, BOOL* pfEaten) {
     m_settings = LoadUserSettings();
     wchar_t buf[80];
     wsprintfW(buf, L"OnTestKeyDown: VK=0x%X english=%d composing=%d\n", (int)wp, m_englishMode, !m_buffer.empty());
     _Dbg(buf);
-    if (wp != VK_SHIFT) m_shiftPending = false;
+    const bool modifiers = (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000);
+    _ObserveShiftDown(wp, lp, modifiers, GetTickCount64());
     // Ask TSF to deliver the Shift event, then let Windows receive it as a
     // modifier; the mode change happens only when Shift is released alone.
-    if (wp == VK_SHIFT) {
+    if (IsShiftKey(wp)) {
         *pfEaten = m_settings.f12Toggle ? FALSE : TRUE;
         return S_OK;
     }
@@ -371,14 +398,14 @@ STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM, BOOL* p
     return S_OK;
 }
 
-STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfEaten) {
+STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) {
+    if (!IsShiftKey(wp)) m_shiftPending = false;
     if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) {
         *pfEaten = FALSE;
         return S_OK;
     }
 
-    if (wp == VK_SHIFT) {
-        m_shiftPending = !m_settings.f12Toggle;
+    if (IsShiftKey(wp)) {
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -395,6 +422,17 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
     }
     *pfEaten = TRUE;
 
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if ((m_deferredCandidate >= 0 || !m_queuedKeys.empty()) && wp != VK_ESCAPE) {
+        m_queuedKeys.push_back({ wp, shift });
+        return S_OK;
+    }
+    _HandleKeyDown(pic, wp, shift, pfEaten);
+    return S_OK;
+}
+
+void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* pfEaten) {
+
     bool composing = !m_buffer.empty();
 
     // Letter → append to buffer (always lowercase for composition)
@@ -406,7 +444,7 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
             _CaptureCaretPos(ec, pic);   // same cookie — no nested-session lock
         });
         _RequestQuery();
-        return S_OK;
+        return;
     }
 
     if (wp == VK_OEM_7 && composing) {
@@ -416,12 +454,12 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
             _CaptureCaretPos(ec, pic);
         });
         _RequestQuery();
-        return S_OK;
+        return;
     }
 
     // Chinese punctuation → insert directly (no composition needed)
     if (!composing && m_settings.chinesePunctuation) {
-        wchar_t zh = VkToChinesePunct(wp);
+        wchar_t zh = VkToChinesePunct(wp, shift);
         wchar_t logbuf[80];
         wsprintfW(logbuf, L"  punct: VK=0x%X zh=U+%04X\n", (int)wp, (int)zh);
         _Dbg(logbuf);
@@ -429,20 +467,20 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
             RunEditSession(pic, m_clientId, [this, pic, zh](TfEditCookie ec) {
                 _InsertText(ec, pic, std::wstring(1, zh));
             });
-            return S_OK;
+            return;
         }
     }
 
-    if (!composing) { *pfEaten = FALSE; return S_OK; }
+    if (!composing) { *pfEaten = FALSE; return; }
 
     switch (wp) {
     case VK_BACK:
         m_buffer.pop_back();
         if (m_buffer.empty()) {
-            RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
-                _EndComposition(ec, pic, L"");
-            });
-            _Reset();
+            bool ended = false;
+            if (RunEditSession(pic, m_clientId, [this, pic, &ended](TfEditCookie ec) {
+                ended = _EndComposition(ec, pic, L"");
+            }) && ended) _Reset();
         } else {
             RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
                 _StartOrUpdateComposition(ec, pic, m_buffer);
@@ -452,23 +490,17 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
         }
         break;
 
-    case VK_ESCAPE:
-        RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
-            _EndComposition(ec, pic, L"");
-        });
-        _Reset();
+    case VK_ESCAPE: {
+        bool ended = false;
+        if (RunEditSession(pic, m_clientId, [this, pic, &ended](TfEditCookie ec) {
+            ended = _EndComposition(ec, pic, L"");
+        }) && ended) _Reset();
         break;
+    }
 
     case VK_SPACE:
-        // commit first candidate (or raw buffer if none)
-        if (!m_candidates.empty())
-            _CommitCandidate(0);
-        else {
-            std::wstring raw = m_buffer;
-            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
-                _EndComposition(ec, pic, raw);
-            })) _Reset();
-        }
+        // Space selects Chinese, even if it arrives before the API response.
+        _CommitCandidate(m_candPage * m_settings.pageSize);
         break;
 
     case VK_RETURN:
@@ -478,12 +510,13 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
             wchar_t dbuf[80];
             wsprintfW(dbuf, L"RETURN: commit raw=%s\n", raw.c_str());
             _Dbg(dbuf);
-            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
-                _EndComposition(ec, pic, raw);
-            })) _Reset();
+            bool ended = false;
+            if (RunEditSession(pic, m_clientId, [this, pic, raw, &ended](TfEditCookie ec) {
+                ended = _EndComposition(ec, pic, raw);
+            }) && ended) _Reset();
         } else {
             *pfEaten = FALSE;
-            return S_OK;
+            return;
         }
         break;
 
@@ -493,7 +526,10 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
     case VK_NEXT:        // Page Down
     case VK_DOWN:
     case VK_RIGHT:
-        if (composing && !m_candidates.empty()) _NextCandPage();
+        if (m_queryPending) {
+            m_queuedKeys.push_back({ wp, shift });
+            _SendQuery();
+        } else _NextCandPage();
         break;
 
     case VK_OEM_MINUS:   // -
@@ -502,27 +538,28 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM, BOOL* p
     case VK_PRIOR:       // Page Up
     case VK_UP:
     case VK_LEFT:
-        if (composing && !m_candidates.empty()) _PrevCandPage();
+        if (m_queryPending) {
+            m_queuedKeys.push_back({ wp, shift });
+            _SendQuery();
+        } else _PrevCandPage();
         break;
 
     default:
         if (wp >= '1' && wp <= ('0' + m_settings.pageSize)) {
             int idx = (int)(wp - '1') + m_candPage * m_settings.pageSize;
-            if (idx < (int)m_candidates.size())
-                _CommitCandidate(idx);
-        }
+            _CommitCandidate(idx);
+        } else *pfEaten = FALSE;
         break;
     }
-    return S_OK;
+    return;
 }
 
 STDMETHODIMP CantoneseIME::OnTestKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* pfEaten) {
-    *pfEaten = wp == VK_SHIFT && !m_settings.f12Toggle ? TRUE : FALSE;
+    *pfEaten = IsShiftKey(wp) && !m_settings.f12Toggle ? TRUE : FALSE;
     return S_OK;
 }
 STDMETHODIMP CantoneseIME::OnKeyUp(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfEaten) {
-    if (wp == VK_SHIFT && m_shiftPending) {
-        m_shiftPending = false;
+    if (IsShiftKey(wp) && _ReleaseShift(GetTickCount64())) {
         _ToggleMode(pic);
     }
     *pfEaten = FALSE;
@@ -530,13 +567,15 @@ STDMETHODIMP CantoneseIME::OnKeyUp(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfE
 }
 
 bool CantoneseIME::_ToggleMode(ITfContext* pic) {
+    if (m_queryPending || !m_queuedKeys.empty()) return false;
     if (!m_buffer.empty()) {
-        if (!m_candidates.empty()) _CommitCandidate(0);
+        if (!m_candidates.empty()) _CommitCandidate(m_candPage * m_settings.pageSize);
         else {
             const std::wstring raw = m_buffer;
-            if (RunEditSession(pic, m_clientId, [this, pic, raw](TfEditCookie ec) {
-                _EndComposition(ec, pic, raw);
-            })) _Reset();
+            bool ended = false;
+            if (RunEditSession(pic, m_clientId, [this, pic, raw, &ended](TfEditCookie ec) {
+                ended = _EndComposition(ec, pic, raw);
+            }) && ended) _Reset();
         }
         if (!m_buffer.empty()) return false;
     }
@@ -552,6 +591,9 @@ STDMETHODIMP CantoneseIME::OnPreservedKey(ITfContext*, REFGUID, BOOL* pfEaten) {
 // Composition
 // ============================================================
 STDMETHODIMP CantoneseIME::OnCompositionTerminated(TfEditCookie, ITfComposition* pComposition) {
+    // Our own EndComposition detached the pointer and its caller owns reset.
+    // Some hosts notify synchronously; others deliver an old notification later.
+    if (pComposition != m_pComposition) return S_OK;
     if (m_pComposition) {
         m_pComposition->Release();
         m_pComposition = nullptr;
@@ -612,19 +654,22 @@ void CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, c
     }
 }
 
-void CantoneseIME::_EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText) {
+bool CantoneseIME::_EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText) {
     wchar_t dbuf[120];
     wsprintfW(dbuf, L"EndComposition: comp=%p text=%s\n", m_pComposition, commitText.c_str());
     _Dbg(dbuf);
     if (!m_pComposition) {
-        if (!commitText.empty()) _InsertText(ec, pic, commitText);
-        return;
+        return commitText.empty() || _InsertText(ec, pic, commitText);
     }
 
     ITfRange* pRange = nullptr;
-    if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
+    if (FAILED(m_pComposition->GetRange(&pRange)) || !pRange) return false;
+    {
         // Replace the composition text with the committed characters
-        pRange->SetText(ec, 0, commitText.c_str(), (LONG)commitText.length());
+        if (FAILED(pRange->SetText(ec, 0, commitText.c_str(), (LONG)commitText.length()))) {
+            pRange->Release();
+            return false;
+        }
 
         // Move selection to end so typing continues after the committed text
         ITfRange* pEnd = nullptr;
@@ -644,20 +689,26 @@ void CantoneseIME::_EndComposition(TfEditCookie ec, ITfContext* pic, const std::
     // our pointer first so the callback cannot release it a second time.
     ITfComposition* composition = m_pComposition;
     m_pComposition = nullptr;
-    composition->EndComposition(ec);
+    if (FAILED(composition->EndComposition(ec))) {
+        m_pComposition = composition;
+        _StartOrUpdateComposition(ec, pic, m_buffer);
+        return false;
+    }
     composition->Release();
+    return true;
 }
 
 // Insert text directly at cursor (no composition needed)
-void CantoneseIME::_InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
-    if (!pic) return;
+bool CantoneseIME::_InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
+    if (!pic) return false;
     ITfInsertAtSelection* pInsert = nullptr;
     if (FAILED(pic->QueryInterface(IID_ITfInsertAtSelection, (void**)&pInsert)) || !pInsert)
-        return;
+        return false;
 
     ITfRange* pRange = nullptr;
-    if (SUCCEEDED(pInsert->InsertTextAtSelection(ec, 0, text.c_str(),
-            (LONG)text.length(), &pRange)) && pRange) {
+    const HRESULT inserted = pInsert->InsertTextAtSelection(ec, 0, text.c_str(),
+            (LONG)text.length(), &pRange);
+    if (SUCCEEDED(inserted) && pRange) {
         // Move caret past inserted text
         pRange->Collapse(ec, TF_ANCHOR_END);
         TF_SELECTION sel;
@@ -668,23 +719,37 @@ void CantoneseIME::_InsertText(TfEditCookie ec, ITfContext* pic, const std::wstr
         pRange->Release();
     }
     pInsert->Release();
+    return SUCCEEDED(inserted);
 }
 
 // ============================================================
 // Candidate query & window
 // ============================================================
 void CantoneseIME::_RequestQuery() {
-    const std::wstring snapshot = m_buffer;
     m_candPage = 0;  // reset to first page on new query
     m_candidates.clear();
     m_queryPending = true;
+    {
+        std::lock_guard<std::mutex> lock(m_queryState->mutex);
+        ++m_queryState->generation;
+        m_queryState->ready = false;
+    }
     _UpdateCandidateWindow();
+    // Coalesce a burst of letters; a selection key flushes this timer immediately.
+    m_queryScheduled = true;
+    if (!m_hMarshalWnd || !SetTimer(m_hMarshalWnd, QUERY_TIMER, 35, nullptr)) _SendQuery();
+}
+
+void CantoneseIME::_SendQuery() {
+    if (!m_queryScheduled) return;
+    m_queryScheduled = false;
+    if (m_hMarshalWnd) KillTimer(m_hMarshalWnd, QUERY_TIMER);
+    const std::wstring snapshot = m_buffer;
     const auto state = m_queryState;
     unsigned long long generation;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        generation = ++state->generation;
-        state->ready = false;
+        generation = state->generation;
     }
     GoogleInputAPI::QueryAsync(snapshot, [state, generation](CandidateResult result) {
         std::lock_guard<std::mutex> lock(state->mutex);
@@ -708,6 +773,65 @@ void CantoneseIME::_ReceiveCandidates() {
     if (m_settings.learnChoices) RankCandidates(m_buffer, m_candidates);
     m_candPage = 0;
     _UpdateCandidateWindow();
+    const int deferred = m_deferredCandidate;
+    m_deferredCandidate = -1;
+    // A final commit resets IME state, but must not discard keys typed after Space.
+    auto queued = std::move(m_queuedKeys);
+    if (deferred >= 0) _CommitCandidate(deferred);
+    m_queuedKeys = std::move(queued);
+    _DrainQueuedKeys();
+}
+
+void CantoneseIME::_DrainQueuedKeys() {
+    auto queued = std::move(m_queuedKeys);
+    m_queuedKeys.clear();
+    while (!queued.empty()) {
+        const auto input = queued.front();
+        queued.pop_front();
+        BOOL eaten = TRUE;
+        _HandleKeyDown(m_pContext, input.key, input.shift, &eaten);
+        // Once the previous word is committed, a queued Space/digit/Enter
+        // belongs to the application instead of the old candidate list.
+        if (!eaten) {
+            if (input.key == VK_BACK) RunEditSession(m_pContext, m_clientId, [this](TfEditCookie ec) {
+                TF_SELECTION selection;
+                ULONG fetched = 0;
+                if (SUCCEEDED(m_pContext->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) && fetched) {
+                    LONG shifted = 0;
+                    if (SUCCEEDED(selection.range->ShiftStart(ec, -1, &shifted, nullptr)) && shifted == -1) {
+                        selection.range->SetText(ec, 0, L"", 0);
+                        selection.range->Collapse(ec, TF_ANCHOR_END);
+                        m_pContext->SetSelection(ec, 1, &selection);
+                    }
+                    selection.range->Release();
+                }
+            });
+            std::wstring literal;
+            if (input.key == VK_SPACE) literal = L" ";
+            else if (input.key == VK_RETURN) literal = L"\r\n";
+            else if (input.key == VK_TAB) literal = L"\t";
+            else if (input.key != VK_BACK && input.key != VK_ESCAPE) {
+                BYTE keyboard[256] = {};
+                keyboard[VK_SHIFT] = input.shift ? 0x80 : 0;
+                WCHAR text[4] = {};
+                const HKL layout = GetKeyboardLayout(0);
+                const UINT scan = MapVirtualKeyExW(static_cast<UINT>(input.key), MAPVK_VK_TO_VSC, layout);
+                const int length = ToUnicodeEx(static_cast<UINT>(input.key), scan, keyboard,
+                    text, 4, 4, layout); // Do not alter Windows' dead-key state.
+                if (length > 0) literal.assign(text, length);
+            }
+            if (!literal.empty()) RunEditSession(m_pContext, m_clientId, [this, literal](TfEditCookie ec) {
+                if (m_buffer.empty()) _InsertText(ec, m_pContext, literal);
+                else {
+                    m_buffer += literal;
+                    _StartOrUpdateComposition(ec, m_pContext, m_buffer);
+                }
+            });
+            if (!literal.empty() && !m_buffer.empty()) _RequestQuery();
+        }
+        if (m_deferredCandidate >= 0 || !m_queuedKeys.empty()) break;
+    }
+    m_queuedKeys.insert(m_queuedKeys.end(), queued.begin(), queued.end());
 }
 
 void CantoneseIME::_NextCandPage() {
@@ -754,29 +878,75 @@ void CantoneseIME::_UpdateCandidateWindow() {
 }
 
 void CantoneseIME::_CommitCandidate(int index) {
+    if (m_queryPending) {
+        m_deferredCandidate = index;
+        _SendQuery();
+        return;
+    }
     if (index < 0 || index >= (int)m_candidates.size()) return;
-    std::wstring text = m_candidates[index].text;
-    std::wstring spelling = m_buffer;
+    const Candidate candidate = m_candidates[index];
+    const std::wstring text = candidate.text;
+    const size_t consumed = candidate.matchedLength > 0 && candidate.matchedLength <= m_buffer.size()
+        ? candidate.matchedLength : m_buffer.size();
+    const std::wstring spelling = m_buffer.substr(0, consumed);
+    std::wstring remainder = m_buffer.substr(consumed);
+    const LONG tailLength = static_cast<LONG>(remainder.size());
+    // Explicit syllable separators following the consumed prefix are not text.
+    remainder.erase(0, remainder.find_first_not_of(L"' "));
     ITfContext* pic = m_pContext;
     wchar_t dbuf[120];
     wsprintfW(dbuf, L"CommitCandidate[%d]: text=%s ctx=%p comp=%p\n",
         index, text.c_str(), pic, m_pComposition);
     _Dbg(dbuf);
-    if (m_pComposition) {
-        if (!RunEditSession(pic, m_clientId, [this, pic, text](TfEditCookie ec) {
-            _EndComposition(ec, pic, text);
-        })) return;
+    if (!remainder.empty() && m_pComposition) {
+        bool committed = false;
+        if (!RunEditSession(pic, m_clientId, [this, pic, text, remainder, tailLength, &committed](TfEditCookie ec) {
+            ITfRange* range = nullptr;
+            if (FAILED(m_pComposition->GetRange(&range)) || !range) return;
+            // Replace only the matched prefix and move the composition start
+            // past it. The remainder and popup stay in the same composition.
+            LONG shifted = 0;
+            if (SUCCEEDED(range->ShiftEnd(ec, -tailLength, &shifted, nullptr)) &&
+                shifted == -tailLength &&
+                SUCCEEDED(range->SetText(ec, 0, text.c_str(), static_cast<LONG>(text.size())))) {
+                committed = SUCCEEDED(range->Collapse(ec, TF_ANCHOR_END)) &&
+                    SUCCEEDED(m_pComposition->ShiftStart(ec, range));
+                if (committed) _StartOrUpdateComposition(ec, pic, remainder);
+                else {
+                    // Keep a readable spelling if the host refuses ShiftStart.
+                    _StartOrUpdateComposition(ec, pic, m_buffer);
+                }
+                _CaptureCaretPos(ec, pic);
+            }
+            range->Release();
+        }) || !committed) return;
+    } else if (m_pComposition) {
+        bool ended = false;
+        if (!RunEditSession(pic, m_clientId, [this, pic, text, &ended](TfEditCookie ec) {
+            ended = _EndComposition(ec, pic, text);
+        }) || !ended) return;
     } else {
         // No composition active — insert text directly
-        if (!RunEditSession(pic, m_clientId, [this, pic, text](TfEditCookie ec) {
-            _InsertText(ec, pic, text);
-        })) return;
+        bool inserted = false;
+        if (!RunEditSession(pic, m_clientId, [this, pic, text, remainder, &inserted](TfEditCookie ec) {
+            inserted = _InsertText(ec, pic, text);
+            if (inserted && !remainder.empty()) _StartOrUpdateComposition(ec, pic, remainder);
+        }) || !inserted) return;
     }
     if (m_settings.learnChoices) RememberSelection(spelling, text);
-    _Reset();
+    if (remainder.empty()) _Reset();
+    else {
+        m_buffer = remainder;
+        _RequestQuery();
+    }
 }
 
 void CantoneseIME::_Reset() {
+    if (m_hMarshalWnd) KillTimer(m_hMarshalWnd, QUERY_TIMER);
+    m_queryScheduled = false;
+    m_deferredCandidate = -1;
+    m_queuedKeys.clear();
+    m_shiftPending = false;
     {
         std::lock_guard<std::mutex> lock(m_queryState->mutex);
         ++m_queryState->generation;
@@ -847,6 +1017,11 @@ void CantoneseIME::_RefreshCaretPos() {
 }
 
 LRESULT CALLBACK CantoneseIME::_MarshalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_TIMER && wp == QUERY_TIMER) {
+        auto* self = reinterpret_cast<CantoneseIME*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (self) self->_SendQuery();
+        return 0;
+    }
     if (msg == WM_CANDIDATES_READY) {
         auto* self = reinterpret_cast<CantoneseIME*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (self) self->_ReceiveCandidates();

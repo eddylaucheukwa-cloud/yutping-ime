@@ -88,4 +88,5 @@ void ClearSelectionHistory() {
 
 void ClearCandidateCache() {
     RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\YutpingIME\\Cache");
+    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\YutpingIME\\CacheV2");
 }

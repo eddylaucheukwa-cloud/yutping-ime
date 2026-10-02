@@ -8,8 +8,17 @@
 #pragma comment(lib, "winhttp.lib")
 
 namespace {
-constexpr wchar_t kCacheKey[] = L"Software\\YutpingIME\\Cache";
+constexpr wchar_t kCacheKey[] = L"Software\\YutpingIME\\CacheV2";
 constexpr unsigned long long kCacheLifetime = 7ULL * 24 * 60 * 60 * 10000000;
+
+// WinHTTP pools connections within a session. Workers each own their request,
+// while the session lives until DLL unload (workers hold g_cDllRef).
+struct HttpSession {
+    HINTERNET handle = WinHttpOpen(L"YutpingIME/1.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HttpSession() { if (handle) WinHttpSetTimeouts(handle, 3000, 3000, 3000, 3000); }
+    ~HttpSession() { if (handle) WinHttpCloseHandle(handle); }
+};
 
 unsigned long long FileTimeNow() {
     FILETIME time;
@@ -37,20 +46,26 @@ bool ReadCache(const std::wstring& spelling, std::vector<Candidate>& candidates,
     if (result != ERROR_SUCCESS) return false;
     std::vector<std::wstring> parts;
     size_t count = bytes / sizeof(wchar_t), pos = 0;
-    while (pos < count && data[pos] && parts.size() < 61) {
+    while (pos < count && data[pos] && parts.size() < 91) {
         size_t end = pos;
         while (end < count && data[end]) ++end;
         if (end == count) return false;
         parts.emplace_back(data.data() + pos, end - pos);
         pos = end + 1;
     }
-    if (parts.size() < 3 || parts.size() % 2 == 0) return false;
+    if (parts.size() < 4 || (parts.size() - 1) % 3 != 0) return false;
     unsigned long long saved = _wcstoui64(parts[0].c_str(), nullptr, 10);
     unsigned long long now = FileTimeNow();
     fresh = saved && now >= saved && now - saved < kCacheLifetime;
-    for (size_t i = 1; i + 1 < parts.size(); i += 2) {
+    for (size_t i = 1; i + 2 < parts.size(); i += 3) {
         if (parts[i + 1] == L"\x0001") parts[i + 1].clear();
-        candidates.push_back({ std::move(parts[i]), std::move(parts[i + 1]) });
+        wchar_t* end = nullptr;
+        auto length = wcstoul(parts[i + 2].c_str(), &end, 10);
+        if (!end || end == parts[i + 2].c_str() || *end || length > spelling.size()) {
+            candidates.clear();
+            return false;
+        }
+        candidates.push_back({ std::move(parts[i]), std::move(parts[i + 1]), length });
     }
     return !candidates.empty();
 }
@@ -69,6 +84,7 @@ void WriteCache(const std::wstring& spelling, const std::vector<Candidate>& cand
     for (const Candidate& candidate : candidates) {
         append(candidate.text);
         append(candidate.annotation.empty() ? L"\x0001" : candidate.annotation);
+        append(std::to_wstring(candidate.matchedLength));
     }
     data.push_back(L'\0');
     RegSetValueExW(key, spelling.c_str(), 0, REG_MULTI_SZ,
@@ -110,7 +126,7 @@ std::vector<std::wstring> ReadStrings(const std::string& json, size_t pos, size_
         ++pos;
         int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
             utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-        if (length > 0) {
+        if (length > 0 || utf8.empty()) {
             std::wstring wide(length, L'\0');
             MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                 utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
@@ -132,18 +148,41 @@ std::vector<Candidate> GoogleInputAPI::ParseResponse(const std::string& json) {
     if (end == std::string::npos) return results;
     auto words = ReadStrings(json, array + 2, MAX_CANDIDATES);
     std::vector<std::wstring> notes;
+    std::vector<size_t> lengths;
     size_t key = json.find("\"annotation\"", end);
     if (key != std::string::npos) {
         size_t opening = json.find('[', key);
         if (opening != std::string::npos) notes = ReadStrings(json, opening + 1, words.size());
     }
+    key = json.find("\"matched_length\"", end);
+    if (key != std::string::npos) {
+        size_t pos = json.find('[', key);
+        if (pos != std::string::npos) {
+            ++pos;
+            while (pos < json.size() && lengths.size() < words.size()) {
+                while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\r' ||
+                    json[pos] == '\n' || json[pos] == '\t' || json[pos] == ',')) ++pos;
+                if (pos == json.size() || json[pos] < '0' || json[pos] > '9') break;
+                size_t value = 0;
+                while (pos < json.size() && json[pos] >= '0' && json[pos] <= '9') {
+                    // Bound untrusted values rather than permitting integer overflow.
+                    value = (std::min)(size_t(65536), value * 10 + json[pos++] - '0');
+                }
+                lengths.push_back(value);
+                if (pos == json.size() || (json[pos] != ',' && json[pos] != ']' &&
+                    json[pos] != ' ' && json[pos] != '\r' && json[pos] != '\n' && json[pos] != '\t')) break;
+            }
+        }
+    }
     for (size_t i = 0; i < words.size(); ++i)
-        results.push_back({ std::move(words[i]), i < notes.size() ? std::move(notes[i]) : L"" });
+        results.push_back({ std::move(words[i]), i < notes.size() ? std::move(notes[i]) : L"",
+            i < lengths.size() ? lengths[i] : 0 });
     return results;
 }
 
 void GoogleInputAPI::ClearCache() {
     RegDeleteTreeW(HKEY_CURRENT_USER, kCacheKey);
+    RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\YutpingIME\\Cache");
 }
 
 std::string GoogleInputAPI::WStringToUtf8(const std::wstring& ws) {
@@ -176,7 +215,7 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
         struct HoldDll { ~HoldDll() { InterlockedDecrement(&g_cDllRef); } } hold;
         auto fail = [&]() { cb({ saved, hasSaved, true }); };
         // Build URL path
-        // GET /request?text=<romaji>&itc=yue-hant-t-i0-und&num=9&cp=0&cs=1&ie=utf-8&oe=utf-8
+        // GET /request?text=<romaji>&itc=yue-hant-t-i0-und&num=27&cp=0&cs=1&ie=utf-8&oe=utf-8
         std::string romajiUtf8 = WStringToUtf8(romaji);
 
         // URL-encode (simple: alphanumeric passthrough, spaces to +)
@@ -195,22 +234,19 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
             "&itc=yue-hant-t-i0-und&num=27&cp=0&cs=1&ie=utf-8&oe=utf-8";
         std::wstring wpath(path.begin(), path.end());
 
-        HINTERNET hSession = WinHttpOpen(L"YutpingIME/1.0",
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        static HttpSession session;
+        HINTERNET hSession = session.handle;
         if (!hSession) { fail(); return; }
-        WinHttpSetTimeouts(hSession, 3000, 3000, 3000, 3000);
 
         HINTERNET hConnect = WinHttpConnect(hSession,
             L"inputtools.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-        if (!hConnect) { WinHttpCloseHandle(hSession); fail(); return; }
+        if (!hConnect) { fail(); return; }
 
         HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET",
             wpath.c_str(), nullptr, WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (!hRequest) {
             WinHttpCloseHandle(hConnect);
-            WinHttpCloseHandle(hSession);
             fail();
             return;
         }
@@ -242,7 +278,6 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
 
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
 
         if (networkOkay && body.rfind("[\"SUCCESS\"", 0) == 0) {
             auto parsed = ParseResponse(body);

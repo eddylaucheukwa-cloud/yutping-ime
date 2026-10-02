@@ -5,6 +5,7 @@
 #include "UserSettings.h"
 #include <memory>
 #include <mutex>
+#include <deque>
 
 // The TSF text service. Implements the minimum interfaces for a
 // composition-based IME:
@@ -61,12 +62,16 @@ public:
 
     // Composition state mutation (called inside edit sessions)
     void _StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
-    void _EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText);
-    void _InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
+    bool _EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText);
+    bool _InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
 
 private:
+    friend class InputTest;
     bool _IsKeyEaten(WPARAM wp) const;
     void _RequestQuery();
+    void _SendQuery();
+    void _HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* eaten);
+    void _DrainQueuedKeys();
     void _UpdateCandidateWindow();
     void _CommitCandidate(int index);
     void _Reset();
@@ -89,6 +94,10 @@ private:
     std::wstring              m_buffer;
     std::vector<Candidate> m_candidates;
     bool m_queryPending = false;
+    bool m_queryScheduled = false;
+    int m_deferredCandidate = -1;
+    struct InputKey { WPARAM key; bool shift; };
+    std::deque<InputKey> m_queuedKeys;
     bool m_cached = false;
     bool m_offline = false;
     UserSettings m_settings;
@@ -100,6 +109,9 @@ private:
     // Shift toggles English/Chinese input mode
     bool m_englishMode = false;
     bool m_shiftPending = false;
+    ULONGLONG m_shiftPressedAt = 0;
+    void _ObserveShiftDown(WPARAM wp, LPARAM lp, bool modifiers, ULONGLONG now);
+    bool _ReleaseShift(ULONGLONG now);
     bool _ToggleMode(ITfContext* context);
 
     // Candidate paging
@@ -121,4 +133,5 @@ private:
     static LRESULT CALLBACK _MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
     enum { WM_CANDIDATES_READY = WM_APP + 1 };
     enum { WM_LAYOUT_READY = WM_APP + 2 };
+    enum { QUERY_TIMER = 1 };
 };

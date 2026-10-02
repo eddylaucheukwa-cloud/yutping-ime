@@ -56,6 +56,14 @@ target_compile_options(YutpingSettingsTest PRIVATE /utf-8)
 set_property(TARGET YutpingSettingsTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_test(NAME SelectionLearning COMMAND YutpingSettingsTest)
 
+add_executable(YutpingInputTest tests/InputTest.cpp src/CantoneseIME.cpp src/UserSettings.cpp src/Guids.cpp)
+target_include_directories(YutpingInputTest PRIVATE src)
+target_link_libraries(YutpingInputTest PRIVATE ole32 uuid user32 advapi32)
+target_compile_definitions(YutpingInputTest PRIVATE UNICODE _UNICODE)
+target_compile_options(YutpingInputTest PRIVATE /utf-8)
+set_property(TARGET YutpingInputTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME InputBehavior COMMAND YutpingInputTest)
+
 # Embed the DLL in a single native installer. Versioned install directories
 # let Windows keep an older in-use DLL mapped while a new build is installed.
 set(installer_rc "${CMAKE_CURRENT_BINARY_DIR}/YutpingSetup.rc")
