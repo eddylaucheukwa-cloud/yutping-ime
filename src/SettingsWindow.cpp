@@ -40,7 +40,7 @@ LRESULT CALLBACK SettingsProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         Control(window, L"STATIC", L"中／英文切換鍵", 0, 24, 153, 180, 22);
         HWND shortcut = Control(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL,
             220, 149, 145, 100, Shortcut);
-        SendMessageW(shortcut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Shift"));
+        SendMessageW(shortcut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Ctrl + Shift"));
         SendMessageW(shortcut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"F12"));
         SendMessageW(shortcut, CB_SETCURSEL, settings.f12Toggle ? 1 : 0, 0);
 

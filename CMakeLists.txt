@@ -58,7 +58,7 @@ add_test(NAME SelectionLearning COMMAND YutpingSettingsTest)
 
 add_executable(YutpingInputTest tests/InputTest.cpp src/CantoneseIME.cpp src/UserSettings.cpp src/Guids.cpp)
 target_include_directories(YutpingInputTest PRIVATE src)
-target_link_libraries(YutpingInputTest PRIVATE ole32 uuid user32 advapi32)
+target_link_libraries(YutpingInputTest PRIVATE ole32 oleaut32 uuid user32 advapi32)
 target_compile_definitions(YutpingInputTest PRIVATE UNICODE _UNICODE)
 target_compile_options(YutpingInputTest PRIVATE /utf-8)
 set_property(TARGET YutpingInputTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

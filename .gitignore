@@ -13,3 +13,4 @@ install/
 # Keep only the single installer end users need.
 dist/*
 !dist/YutpingSetup.exe
+!dist/YutpingDiagnostics.zip

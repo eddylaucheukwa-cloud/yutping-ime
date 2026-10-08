@@ -10,7 +10,8 @@ namespace {
 using DllRegistration = HRESULT (STDAPICALLTYPE*)();
 constexpr wchar_t kUninstallKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\YutpingIME";
 constexpr wchar_t kInstalledMessage[] =
-    L"Yutping IME 已更新。\n\n"
+    L"Yutping IME 安裝完成。\n\n"
+    L"請按 Win + Space，選擇「粵拼輸入法 (Yutping IME)」。\n\n"
     L"已開啟的程式可能仍使用舊版輸入法。請先關閉並重開要輸入的程式。"
     L"若介面仍是舊版，請從 Windows 登出再登入；不需要重裝或重開機。";
 

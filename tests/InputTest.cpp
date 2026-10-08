@@ -32,6 +32,19 @@ struct Document {
     std::wstring text;
     LONG caret = 0, start = 0, end = 0;
     bool active = false, refuseShift = false, refuseWrite = false, refuseSession = false;
+    DWORD flags = 0;
+    HRESULT statusResult = S_OK;
+    bool hasInsert = true, keyboardDisabled = false, emptyContext = false;
+};
+class Compartment : public ITfCompartment {
+public:
+    bool& flag;
+    explicit Compartment(bool& value) : flag(value) {}
+    REFCOUNTED
+    STDMETHODIMP GetValue(VARIANT* value) override {
+        VariantInit(value); value->vt = VT_I4; value->lVal = flag ? 1 : 0; return S_OK;
+    }
+    UNUSED_METHOD(SetValue, (TfClientId, const VARIANT*))
 };
 class Range : public ITfRange {
 public:
@@ -96,12 +109,13 @@ public:
         return S_OK;
     }
 };
-class Context : public ITfContext, public ITfInsertAtSelection, public ITfContextComposition {
+class Context : public ITfContext, public ITfInsertAtSelection, public ITfContextComposition, public ITfCompartmentMgr {
 public:
     Document doc;
     STDMETHODIMP QueryInterface(REFIID iid, void** out) override {
         *out = nullptr;
-        if (iid == IID_ITfInsertAtSelection) *out = static_cast<ITfInsertAtSelection*>(this);
+        if (iid == IID_ITfInsertAtSelection && doc.hasInsert) *out = static_cast<ITfInsertAtSelection*>(this);
+        if (iid == IID_ITfCompartmentMgr) *out = static_cast<ITfCompartmentMgr*>(this);
         if (iid == IID_ITfContextComposition) *out = static_cast<ITfContextComposition*>(this);
         if (iid == IID_ITfContext || iid == IID_IUnknown) *out = static_cast<ITfContext*>(this);
         return *out ? S_OK : E_NOINTERFACE;
@@ -140,7 +154,17 @@ public:
     UNUSED_METHOD(GetEnd, (TfEditCookie, ITfRange**))
     UNUSED_METHOD(GetActiveView, (ITfContextView**))
     UNUSED_METHOD(EnumViews, (IEnumTfContextViews**))
-    UNUSED_METHOD(GetStatus, (TF_STATUS*))
+    STDMETHODIMP GetStatus(TF_STATUS* status) override {
+        *status = {}; status->dwDynamicFlags = doc.flags; return doc.statusResult;
+    }
+    STDMETHODIMP GetCompartment(REFGUID id, ITfCompartment** out) override {
+        *out = nullptr;
+        if (id == GUID_COMPARTMENT_KEYBOARD_DISABLED) *out = new Compartment(doc.keyboardDisabled);
+        else if (id == GUID_COMPARTMENT_EMPTYCONTEXT) *out = new Compartment(doc.emptyContext);
+        return *out ? S_OK : E_INVALIDARG;
+    }
+    UNUSED_METHOD(ClearCompartment, (TfClientId, REFGUID))
+    UNUSED_METHOD(EnumCompartments, (IEnumGUID**))
     UNUSED_METHOD(GetProperty, (REFGUID, ITfProperty**))
     UNUSED_METHOD(GetAppProperty, (REFGUID, ITfReadOnlyProperty**))
     UNUSED_METHOD(TrackProperties, (const GUID**, ULONG, const GUID**, ULONG, ITfReadOnlyProperty**))
@@ -297,19 +321,103 @@ public:
         {
             InputTest t;
             auto& ime = t.ime;
-            ime.m_shiftPending = true; ime.m_shiftPressedAt = 1000;
-            Check(ime._ReleaseShift(1150), "short lone Shift toggles");
-            Check(!ime._ReleaseShift(1160), "duplicate keyup cannot toggle");
-            ime.m_shiftPending = true; ime.m_shiftPressedAt = 1000;
-            Check(!ime._ReleaseShift(1500), "held Shift does not toggle");
-            ime.m_shiftPending = true;
-            ime._ObserveShiftDown('A', 0, false, 1100);
-            Check(!ime._ReleaseShift(1200), "uppercase chord does not toggle");
-            ime.m_shiftPending = false;
-            ime._ObserveShiftDown(VK_SHIFT, LPARAM(1) << 30, false, 1200);
-            Check(!ime._ReleaseShift(1300), "Shift repeat does not rearm");
-            ime._ObserveShiftDown(VK_LSHIFT, 0, true, 1400);
-            Check(!ime._ReleaseShift(1450), "Ctrl/Alt Shift does not toggle");
+            ime._ObserveToggleDown(VK_SHIFT, 0, false, true, false);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "Shift alone cannot toggle");
+            ime._ObserveToggleDown(VK_CONTROL, 0, true, false, false);
+            ime._ObserveToggleDown(VK_SHIFT, 0, true, true, false);
+            Check(ime._ReleaseToggle(VK_SHIFT), "Ctrl then Shift toggles");
+            Check(!ime._ReleaseToggle(VK_CONTROL), "second modifier release cannot toggle again");
+            ime._ObserveToggleDown(VK_RSHIFT, 0, false, true, false);
+            ime._ObserveToggleDown(VK_LCONTROL, 0, true, true, false);
+            Check(ime._ReleaseToggle(VK_LCONTROL), "Shift then Ctrl toggles");
+            ime._ObserveToggleDown(VK_SHIFT, 0, true, true, false);
+            ime._ObserveToggleDown('W', 0, true, true, false);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "Ctrl Shift W cannot toggle");
+            ime._ObserveToggleDown(VK_SHIFT, LPARAM(1) << 30, true, true, false);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "repeat cannot rearm used chord");
+            ime._ObserveToggleDown(VK_SHIFT, 0, true, true, true);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "Alt chord cannot toggle");
+            ime.m_settings.f12Toggle = true;
+            ime._ObserveToggleDown(VK_SHIFT, 0, true, true, false);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "F12 preference disables chord");
+        }
+        {
+            InputTest t;
+            auto& ime = t.ime;
+            Check(ime._CanAcceptInput(&t.context), "editable chat field accepts input");
+            Check(!ime._CanAcceptInput(nullptr), "no text context bypasses IME");
+            const auto before = requests.size();
+            for (int state = 0; state < 5; ++state) {
+                t.context.doc.flags = state == 0 ? TF_SD_READONLY : 0;
+                t.context.doc.keyboardDisabled = state == 1;
+                t.context.doc.emptyContext = state == 2;
+                t.context.doc.hasInsert = state != 3;
+                t.context.doc.statusResult = state == 4 ? TF_E_DISCONNECTED : S_OK;
+                Check(!ime._CanAcceptInput(&t.context), "non-editable context bypasses input");
+                for (WPARAM key : std::initializer_list<WPARAM>{'W', 'A', 'S', 'D', VK_SPACE, VK_OEM_PERIOD}) {
+                    BOOL eaten = TRUE;
+                    ime.OnTestKeyDown(&t.context, key, 0, &eaten);
+                    Check(!eaten, "game control not claimed by test callback");
+                    ime.OnKeyDown(&t.context, key, 0, &eaten);
+                    Check(!eaten && ime.m_buffer.empty(), "game control not consumed");
+                }
+            }
+            Check(requests.size() == before && t.context.doc.text.empty(), "game controls never query Google or insert text");
+            t.context.doc = {};
+            t.ime.OnSetFocus(FALSE);
+            Check(!ime._CanAcceptInput(&t.context), "background service cannot intercept controls");
+            t.ime.OnSetFocus(TRUE);
+            Check(ime._CanAcceptInput(&t.context), "editable focus resumes input");
+            ime.m_settings.learnChoices = false;
+            t.Type("neiho"); t.Result({ {L"你好", L"", 5} }); t.Key(VK_SPACE);
+            Check(t.context.doc.text == L"你好", "chat resumes normal candidate selection");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Key(VK_SPACE);
+            const auto callback = requests.back();
+            t.context.doc.keyboardDisabled = true;
+            callback({ {{L"你好", L"", 5}}, false, false });
+            t.ime._ReceiveCandidates();
+            Check(t.context.doc.text == L"neiho" && t.ime.m_buffer.empty(), "late reply cannot write into disabled game context");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Key(VK_SPACE); t.Type("ho");
+            const auto callback = requests.back();
+            Check(t.ime._ToggleMode(&t.context) && t.ime.m_englishMode, "mode switch works while query pending");
+            Check(t.context.doc.text == L"neihoho" && t.ime.m_buffer.empty(), "switch preserves pending and queued spelling");
+            callback({ {{L"你好", L"", 5}}, false, false });
+            t.ime._ReceiveCandidates();
+            Check(t.context.doc.text == L"neihoho", "late query cannot convert after mode switch");
+            for (WPARAM key : std::initializer_list<WPARAM>{'W', 'A', 'S', 'D', VK_SPACE}) {
+                BOOL eaten = TRUE;
+                t.ime.OnKeyDown(&t.context, key, 0, &eaten);
+                Check(!eaten, "English mode leaves control keys alone");
+            }
+        }
+        for (bool refuseSession : {false, true}) {
+            InputTest t;
+            t.context.doc.refuseSession = refuseSession;
+            t.context.doc.refuseWrite = !refuseSession;
+            const auto before = requests.size();
+            for (WPARAM key : std::initializer_list<WPARAM>{'W', 'A', 'S', 'D', VK_OEM_PERIOD}) {
+                BOOL eaten = TRUE;
+                t.ime.OnKeyDown(&t.context, key, 0, &eaten);
+                Check(!eaten && t.ime.m_buffer.empty(), "refused text writes pass controls to host");
+            }
+            Check(requests.size() == before && t.context.doc.text.empty(), "refused writes do not query or change text");
+            Check(!t.context.doc.active, "refused first letter leaves no empty composition");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Key(VK_SPACE);
+            const auto callback = requests.back();
+            t.context.doc.keyboardDisabled = true;
+            Check(t.ime._ToggleMode(&t.context) && t.ime.m_englishMode, "manual switch works after editable focus disappears");
+            callback({ {{L"你好", L"", 5}}, false, false });
+            t.ime._ReceiveCandidates();
+            Check(t.context.doc.text == L"neiho" && t.ime.m_buffer.empty(), "switch never writes into disabled context");
         }
         std::cout << "Input behavior checks passed\n";
     }

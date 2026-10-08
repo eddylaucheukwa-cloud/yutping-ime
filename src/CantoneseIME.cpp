@@ -1,6 +1,7 @@
 #include "CantoneseIME.h"
 #include <new>
 #include <cstdint>
+#include <cstdio>
 
 // ============================================================
 // Debug logging
@@ -18,6 +19,36 @@ static void _Dbg(const wchar_t* fmt) {
 //   TSF forbids touching document text outside an edit session.
 //   We wrap each mutation in a tiny ITfEditSession implementation.
 // ============================================================
+// Activation results only; no keys, spelling, or document text.
+// File access may be denied in app containers; logging must not affect input.
+static void TraceActivation(const char* stage, HRESULT result) {
+    wchar_t local[32768];
+    DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, 32768);
+    if (!length || length >= 32768) return;
+    const std::wstring directory = std::wstring(local) + L"\\YutpingIME";
+    if (!CreateDirectoryW(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return;
+    const std::wstring path = directory + L"\\activation.log";
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    LARGE_INTEGER size = {};
+    if (GetFileSizeEx(file, &size) && size.QuadPart > 65536) {
+        CloseHandle(file);
+        file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+    }
+    SYSTEMTIME time;
+    GetSystemTime(&time);
+    char line[180];
+    const int count = sprintf_s(line, "%04u-%02u-%02uT%02u:%02u:%02uZ pid=%lu %s hr=0x%08lX\r\n",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+        GetCurrentProcessId(), stage, static_cast<unsigned long>(result));
+    DWORD written;
+    if (count > 0) WriteFile(file, line, static_cast<DWORD>(count), &written, nullptr);
+    CloseHandle(file);
+}
+
 namespace {
 
 // Generic edit session that runs a std::function under an edit cookie.
@@ -127,7 +158,9 @@ STDMETHODIMP CantoneseIME::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 }
 
 STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD) {
+    TraceActivation("ActivateEx.start", ptim ? S_OK : E_INVALIDARG);
     if (!ptim) return E_INVALIDARG;
+    m_foreground = true;
     m_settings = LoadUserSettings();
     m_pThreadMgr = ptim;
     m_pThreadMgr->AddRef();
@@ -146,17 +179,23 @@ STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD)
 
     // Sink for focus changes
     ITfSource* pSource = nullptr;
-    if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSource)) && pSource) {
-        pSource->AdviseSink(IID_ITfThreadMgrEventSink,
+    HRESULT sourceResult = m_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSource);
+    TraceActivation("ThreadSource.QI", sourceResult);
+    if (SUCCEEDED(sourceResult) && pSource) {
+        HRESULT advised = pSource->AdviseSink(IID_ITfThreadMgrEventSink,
             static_cast<ITfThreadMgrEventSink*>(this), &m_threadMgrCookie);
+        TraceActivation("ThreadSink.Advise", advised);
         pSource->Release();
     }
 
     // Keyboard sink
     ITfKeystrokeMgr* pKeyMgr = nullptr;
-    if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr)) && pKeyMgr) {
-        pKeyMgr->AdviseKeyEventSink(m_clientId,
+    HRESULT keyResult = m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr);
+    TraceActivation("KeyboardManager.QI", keyResult);
+    if (SUCCEEDED(keyResult) && pKeyMgr) {
+        HRESULT advised = pKeyMgr->AdviseKeyEventSink(m_clientId,
             static_cast<ITfKeyEventSink*>(this), TRUE);
+        TraceActivation("KeyboardSink.Advise", advised);
         pKeyMgr->Release();
     }
 
@@ -176,6 +215,7 @@ STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD)
     }
     if (!m_hMarshalWnd) {
         HRESULT error = HRESULT_FROM_WIN32(GetLastError());
+        TraceActivation("MarshalWindow.Create", error);
         Deactivate();
         return error;
     }
@@ -193,6 +233,7 @@ STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD)
         focus->Release();
     }
 
+    TraceActivation("ActivateEx.complete", S_OK);
     return S_OK;
 }
 
@@ -241,6 +282,12 @@ STDMETHODIMP CantoneseIME::OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr*
 }
 
 void CantoneseIME::_SetContext(ITfContext* context) {
+    if (context != m_pContext && m_pComposition) {
+        // The host owns the old composition's lifetime; never edit its range
+        // with a cookie belonging to a newly focused document.
+        m_pComposition->Release();
+        m_pComposition = nullptr;
+    }
     if (m_pContext && m_layoutCookie != TF_INVALID_COOKIE) {
         ITfSource* source = nullptr;
         if (SUCCEEDED(m_pContext->QueryInterface(IID_ITfSource, (void**)&source))) {
@@ -312,6 +359,49 @@ static wchar_t VkToChinesePunct(WPARAM wp, bool shift = (GetKeyState(VK_SHIFT) &
 }
 
 // Which keys does the IME want to consume?
+bool CantoneseIME::_CanAcceptInput(ITfContext* context) const {
+    if (!m_foreground || !context) return false;
+    TF_STATUS status = {};
+    if (FAILED(context->GetStatus(&status)) || (status.dwDynamicFlags & TF_SD_READONLY))
+        return false;
+
+    ITfCompartmentMgr* manager = nullptr;
+    if (SUCCEEDED(context->QueryInterface(IID_ITfCompartmentMgr, reinterpret_cast<void**>(&manager))) && manager) {
+        bool disabled = false;
+        for (const GUID& id : { GUID_COMPARTMENT_KEYBOARD_DISABLED, GUID_COMPARTMENT_EMPTYCONTEXT }) {
+            ITfCompartment* compartment = nullptr;
+            if (SUCCEEDED(manager->GetCompartment(id, &compartment)) && compartment) {
+                VARIANT value;
+                VariantInit(&value);
+                if (SUCCEEDED(compartment->GetValue(&value)) && value.vt == VT_I4 && value.lVal)
+                    disabled = true;
+                VariantClear(&value);
+                compartment->Release();
+            }
+        }
+        manager->Release();
+        if (disabled) return false;
+    }
+    ITfInsertAtSelection* insert = nullptr;
+    const HRESULT result = context->QueryInterface(IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert));
+    if (insert) insert->Release();
+    return SUCCEEDED(result) && insert;
+}
+
+void CantoneseIME::_SuspendInput() {
+    _Reset(); // Also invalidates queued API replies and hides the candidate popup.
+    if (m_pComposition) {
+        m_pComposition->Release();
+        m_pComposition = nullptr;
+    }
+}
+
+STDMETHODIMP CantoneseIME::OnSetFocus(BOOL foreground) {
+    m_foreground = foreground != FALSE;
+    if (!m_foreground) _SuspendInput();
+    return S_OK;
+}
+
 bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
     // In English mode, let everything pass through
     if (m_englishMode) return false;
@@ -352,34 +442,43 @@ static bool IsShiftKey(WPARAM wp) {
     return wp == VK_SHIFT || wp == VK_LSHIFT || wp == VK_RSHIFT;
 }
 
-void CantoneseIME::_ObserveShiftDown(WPARAM wp, LPARAM lp, bool modifiers, ULONGLONG now) {
-    if (!IsShiftKey(wp)) { m_shiftPending = false; return; }
-    if (lp & (LPARAM(1) << 30)) return; // Auto-repeat must not re-arm a used Shift.
-    m_shiftPressedAt = now;
-    m_shiftPending = !m_settings.f12Toggle && !modifiers;
-    // A letter may already be held when Shift is pressed for uppercase.
-    for (int key = VK_BACK; m_shiftPending && key < 256; ++key) {
-        if (!IsShiftKey(key) && (GetKeyState(key) & 0x8000)) m_shiftPending = false;
+static bool IsControlKey(WPARAM wp) {
+    return wp == VK_CONTROL || wp == VK_LCONTROL || wp == VK_RCONTROL;
+}
+
+void CantoneseIME::_ObserveToggleDown(WPARAM wp, LPARAM lp, bool control, bool shift, bool alt) {
+    if (m_settings.f12Toggle || alt || (!IsShiftKey(wp) && !IsControlKey(wp))) {
+        m_togglePending = false;
+        return;
+    }
+    if (lp & (LPARAM(1) << 30)) return; // A used chord must not re-arm on repeat.
+    if (control && shift) {
+        m_togglePending = true;
+        for (int key = 1; m_togglePending && key < 256; ++key)
+            if (!IsShiftKey(key) && !IsControlKey(key) && (GetKeyState(key) & 0x8000))
+                m_togglePending = false;
     }
 }
 
-bool CantoneseIME::_ReleaseShift(ULONGLONG now) {
-    const bool toggle = m_shiftPending && !m_settings.f12Toggle &&
-        now - m_shiftPressedAt <= 300;
-    m_shiftPending = false;
+bool CantoneseIME::_ReleaseToggle(WPARAM wp) {
+    const bool toggle = m_togglePending && !m_settings.f12Toggle &&
+        (IsShiftKey(wp) || IsControlKey(wp));
+    m_togglePending = false;
     return toggle;
 }
 
-STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM lp, BOOL* pfEaten) {
+STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) {
     m_settings = LoadUserSettings();
     wchar_t buf[80];
     wsprintfW(buf, L"OnTestKeyDown: VK=0x%X english=%d composing=%d\n", (int)wp, m_englishMode, !m_buffer.empty());
     _Dbg(buf);
-    const bool modifiers = (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000);
-    _ObserveShiftDown(wp, lp, modifiers, GetTickCount64());
-    // Ask TSF to deliver the Shift event, then let Windows receive it as a
-    // modifier; the mode change happens only when Shift is released alone.
-    if (IsShiftKey(wp)) {
+    const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    _ObserveToggleDown(wp, lp, control, shift, alt);
+    // Request modifier callbacks but let their actual down/up events reach the
+    // host. Toggle once on the first release of a Ctrl+Shift-only chord.
+    if (IsShiftKey(wp) || IsControlKey(wp)) {
         *pfEaten = m_settings.f12Toggle ? FALSE : TRUE;
         return S_OK;
     }
@@ -392,6 +491,11 @@ STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM lp, BOOL
         *pfEaten = TRUE;
         return S_OK;
     }
+    if (!_CanAcceptInput(pic)) {
+        _SuspendInput();
+        *pfEaten = FALSE;
+        return S_OK;
+    }
     *pfEaten = _IsKeyEaten(wp) ? TRUE : FALSE;
     wsprintfW(buf, L"  eaten=%d punct=%d\n", *pfEaten, (int)VkToChinesePunct(wp));
     _Dbg(buf);
@@ -399,13 +503,13 @@ STDMETHODIMP CantoneseIME::OnTestKeyDown(ITfContext*, WPARAM wp, LPARAM lp, BOOL
 }
 
 STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) {
-    if (!IsShiftKey(wp)) m_shiftPending = false;
+    if (!IsShiftKey(wp) && !IsControlKey(wp)) m_togglePending = false;
     if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) {
         *pfEaten = FALSE;
         return S_OK;
     }
 
-    if (IsShiftKey(wp)) {
+    if (IsShiftKey(wp) || IsControlKey(wp)) {
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -414,6 +518,15 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL
         _ToggleMode(pic);
         *pfEaten = TRUE;
         return S_OK;
+    }
+    if (!_CanAcceptInput(pic)) {
+        _SuspendInput();
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+    if (pic != m_pContext) {
+        _SuspendInput();
+        _SetContext(pic);
     }
 
     if (!_IsKeyEaten(wp)) {
@@ -432,17 +545,24 @@ STDMETHODIMP CantoneseIME::OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL
 }
 
 void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* pfEaten) {
+    if (m_englishMode) { *pfEaten = FALSE; return; }
 
     bool composing = !m_buffer.empty();
 
     // Letter → append to buffer (always lowercase for composition)
     if (wp >= 'A' && wp <= 'Z') {
         wchar_t ch = (wchar_t)(wp - 'A' + 'a');
+        const std::wstring previous = m_buffer;
         m_buffer += ch;
-        RunEditSession(pic, m_clientId, [this, pic](TfEditCookie ec) {
-            _StartOrUpdateComposition(ec, pic, m_buffer);
-            _CaptureCaretPos(ec, pic);   // same cookie — no nested-session lock
-        });
+        bool written = false;
+        if (!RunEditSession(pic, m_clientId, [this, pic, &written](TfEditCookie ec) {
+            written = _StartOrUpdateComposition(ec, pic, m_buffer);
+            if (written) _CaptureCaretPos(ec, pic);
+        }) || !written) {
+            m_buffer = previous;
+            *pfEaten = FALSE; // A host refusing text must still receive its controls.
+            return;
+        }
         _RequestQuery();
         return;
     }
@@ -464,9 +584,10 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
         wsprintfW(logbuf, L"  punct: VK=0x%X zh=U+%04X\n", (int)wp, (int)zh);
         _Dbg(logbuf);
         if (zh) {
-            RunEditSession(pic, m_clientId, [this, pic, zh](TfEditCookie ec) {
-                _InsertText(ec, pic, std::wstring(1, zh));
-            });
+            bool written = false;
+            if (!RunEditSession(pic, m_clientId, [this, pic, zh, &written](TfEditCookie ec) {
+                written = _InsertText(ec, pic, std::wstring(1, zh));
+            }) || !written) *pfEaten = FALSE;
             return;
         }
     }
@@ -555,11 +676,11 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
 }
 
 STDMETHODIMP CantoneseIME::OnTestKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* pfEaten) {
-    *pfEaten = IsShiftKey(wp) && !m_settings.f12Toggle ? TRUE : FALSE;
+    *pfEaten = (IsShiftKey(wp) || IsControlKey(wp)) && !m_settings.f12Toggle ? TRUE : FALSE;
     return S_OK;
 }
 STDMETHODIMP CantoneseIME::OnKeyUp(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfEaten) {
-    if (IsShiftKey(wp) && _ReleaseShift(GetTickCount64())) {
+    if (_ReleaseToggle(wp)) {
         _ToggleMode(pic);
     }
     *pfEaten = FALSE;
@@ -567,19 +688,27 @@ STDMETHODIMP CantoneseIME::OnKeyUp(ITfContext* pic, WPARAM wp, LPARAM, BOOL* pfE
 }
 
 bool CantoneseIME::_ToggleMode(ITfContext* pic) {
-    if (m_queryPending || !m_queuedKeys.empty()) return false;
+    if (!_CanAcceptInput(pic) || pic != m_pContext) {
+        _SuspendInput();
+        if (pic != m_pContext) _SetContext(pic);
+    }
+    auto queued = std::move(m_queuedKeys);
     if (!m_buffer.empty()) {
-        if (!m_candidates.empty()) _CommitCandidate(m_candPage * m_settings.pageSize);
-        else {
-            const std::wstring raw = m_buffer;
-            bool ended = false;
-            if (RunEditSession(pic, m_clientId, [this, pic, raw, &ended](TfEditCookie ec) {
-                ended = _EndComposition(ec, pic, raw);
-            }) && ended) _Reset();
+        // Switching modes is also the manual escape from pending conversion.
+        // Preserve spelling rather than guessing a candidate or waiting online.
+        const std::wstring raw = m_buffer;
+        bool ended = false;
+        if (!RunEditSession(pic, m_clientId, [this, pic, raw, &ended](TfEditCookie ec) {
+            ended = _EndComposition(ec, pic, raw);
+        }) || !ended) {
+            m_queuedKeys = std::move(queued);
+            return false;
         }
-        if (!m_buffer.empty()) return false;
+        _Reset();
     }
     m_englishMode = !m_englishMode;
+    m_queuedKeys = std::move(queued);
+    _DrainQueuedKeys();
     return true;
 }
 STDMETHODIMP CantoneseIME::OnPreservedKey(ITfContext*, REFGUID, BOOL* pfEaten) {
@@ -602,14 +731,15 @@ STDMETHODIMP CantoneseIME::OnCompositionTerminated(TfEditCookie, ITfComposition*
     return S_OK;
 }
 
-void CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
-    if (!pic) return;
+bool CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text) {
+    if (!pic) return false;
+    const bool starting = !m_pComposition;
 
     if (!m_pComposition) {
         // Start a new composition at the current selection
         ITfInsertAtSelection* pInsert = nullptr;
         if (FAILED(pic->QueryInterface(IID_ITfInsertAtSelection, (void**)&pInsert)) || !pInsert)
-            return;
+            return false;
 
         ITfRange* pRange = nullptr;
         if (SUCCEEDED(pInsert->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &pRange)) && pRange) {
@@ -624,12 +754,21 @@ void CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, c
         pInsert->Release();
     }
 
-    if (!m_pComposition) return;
+    if (!m_pComposition) return false;
 
     // Replace composition range text
     ITfRange* pRange = nullptr;
     if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
-        pRange->SetText(ec, 0, text.c_str(), (LONG)text.length());
+        if (FAILED(pRange->SetText(ec, 0, text.c_str(), (LONG)text.length()))) {
+            pRange->Release();
+            if (starting) {
+                ITfComposition* composition = m_pComposition;
+                m_pComposition = nullptr;
+                composition->EndComposition(ec);
+                composition->Release();
+            }
+            return false;
+        }
 
         // Underline the composition to show it's pending
         ITfProperty* pProp = nullptr;
@@ -651,7 +790,9 @@ void CantoneseIME::_StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, c
             pEnd->Release();
         }
         pRange->Release();
+        return true;
     }
+    return false;
 }
 
 bool CantoneseIME::_EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText) {
@@ -761,6 +902,10 @@ void CantoneseIME::_SendQuery() {
 }
 
 void CantoneseIME::_ReceiveCandidates() {
+    if (!_CanAcceptInput(m_pContext)) {
+        _SuspendInput();
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(m_queryState->mutex);
         if (!m_queryState->ready) return;
@@ -878,6 +1023,10 @@ void CantoneseIME::_UpdateCandidateWindow() {
 }
 
 void CantoneseIME::_CommitCandidate(int index) {
+    if (!_CanAcceptInput(m_pContext)) {
+        _SuspendInput();
+        return;
+    }
     if (m_queryPending) {
         m_deferredCandidate = index;
         _SendQuery();
@@ -946,7 +1095,7 @@ void CantoneseIME::_Reset() {
     m_queryScheduled = false;
     m_deferredCandidate = -1;
     m_queuedKeys.clear();
-    m_shiftPending = false;
+    m_togglePending = false;
     {
         std::lock_guard<std::mutex> lock(m_queryState->mutex);
         ++m_queryState->generation;

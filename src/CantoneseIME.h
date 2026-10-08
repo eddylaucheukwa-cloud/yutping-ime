@@ -43,7 +43,7 @@ public:
     STDMETHODIMP OnPopContext(ITfContext*) override { return S_OK; }
 
     // ITfKeyEventSink
-    STDMETHODIMP OnSetFocus(BOOL fForeground) override { return S_OK; }
+    STDMETHODIMP OnSetFocus(BOOL fForeground) override;
     STDMETHODIMP OnTestKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) override;
     STDMETHODIMP OnKeyDown(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) override;
     STDMETHODIMP OnTestKeyUp(ITfContext* pic, WPARAM wp, LPARAM lp, BOOL* pfEaten) override;
@@ -61,13 +61,16 @@ public:
     void _SetComposition(ITfComposition* p) { m_pComposition = p; }
 
     // Composition state mutation (called inside edit sessions)
-    void _StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
+    bool _StartOrUpdateComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
     bool _EndComposition(TfEditCookie ec, ITfContext* pic, const std::wstring& commitText);
     bool _InsertText(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
 
 private:
     friend class InputTest;
     bool _IsKeyEaten(WPARAM wp) const;
+    bool _CanAcceptInput(ITfContext* context) const;
+    void _SuspendInput();
+    bool m_foreground = true;
     void _RequestQuery();
     void _SendQuery();
     void _HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* eaten);
@@ -106,12 +109,11 @@ private:
 
     DWORD m_uiThreadId = 0;
 
-    // Shift toggles English/Chinese input mode
+    // A lone Ctrl+Shift chord toggles English/Chinese input mode.
     bool m_englishMode = false;
-    bool m_shiftPending = false;
-    ULONGLONG m_shiftPressedAt = 0;
-    void _ObserveShiftDown(WPARAM wp, LPARAM lp, bool modifiers, ULONGLONG now);
-    bool _ReleaseShift(ULONGLONG now);
+    bool m_togglePending = false;
+    void _ObserveToggleDown(WPARAM wp, LPARAM lp, bool control, bool shift, bool alt);
+    bool _ReleaseToggle(WPARAM wp);
     bool _ToggleMode(ITfContext* context);
 
     // Candidate paging
