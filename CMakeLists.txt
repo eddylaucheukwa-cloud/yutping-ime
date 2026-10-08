@@ -64,6 +64,18 @@ target_compile_options(YutpingInputTest PRIVATE /utf-8)
 set_property(TARGET YutpingInputTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_test(NAME InputBehavior COMMAND YutpingInputTest)
 
+add_executable(YutpingActivationTest tests/ActivationTest.cpp src/Guids.cpp)
+target_include_directories(YutpingActivationTest PRIVATE src)
+target_link_libraries(YutpingActivationTest PRIVATE ole32 uuid)
+target_compile_definitions(YutpingActivationTest PRIVATE UNICODE _UNICODE)
+target_compile_options(YutpingActivationTest PRIVATE /utf-8)
+set_property(TARGET YutpingActivationTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_dependencies(YutpingActivationTest YutpingIME)
+add_test(NAME NativeActivation COMMAND YutpingActivationTest "$<TARGET_FILE:YutpingIME>")
+find_program(YUTPING_POWERSHELL powershell REQUIRED)
+add_test(NAME InstallerUserProfile COMMAND "${YUTPING_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstallerProfileTest.ps1")
+
 # Embed the DLL in a single native installer. Versioned install directories
 # let Windows keep an older in-use DLL mapped while a new build is installed.
 set(installer_rc "${CMAKE_CURRENT_BINARY_DIR}/YutpingSetup.rc")

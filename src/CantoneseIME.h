@@ -92,6 +92,7 @@ private:
     ITfComposition* m_pComposition = nullptr;
 
     DWORD m_threadMgrCookie = TF_INVALID_COOKIE;
+    bool m_keySinkAdvised = false;
     DWORD m_layoutCookie = TF_INVALID_COOKIE;
 
     std::wstring              m_buffer;

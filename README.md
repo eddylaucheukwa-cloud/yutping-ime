@@ -7,7 +7,7 @@
 ## 下載與安裝
 
 1. [直接下載 Windows 安裝程式](https://github.com/eddylaucheukwa-cloud/yutping-ime/raw/main/dist/YutpingSetup.exe)（`YutpingSetup.exe`）。更新時亦可執行同一個檔案，原有設定會保留。
-2. 雙擊 EXE，接受 Windows 管理員權限提示。程式會註冊輸入法，並在需要時加入「中文（繁體，香港）」語言；原有語言設定會保留。
+2. 雙擊 EXE，接受 Windows 管理員權限提示。程式會註冊輸入法、在需要時加入「中文（繁體，香港）」語言，並把 Yutping 加入目前使用者的鍵盤清單；原有語言及鍵盤設定會保留。
 3. 關閉並重開想使用輸入法的程式，按 `Win + Space` 選擇「粵拼輸入法 (Yutping IME)」。如果仍顯示舊版，請先儲存工作，從 Windows **登出再登入**。已開啟的程式可能仍把舊 DLL 留在記憶體；毋須反覆安裝。
 
 安裝程式未有數碼簽署，Windows 可能顯示「未知發行者」警告。只支援 64 位元應用程式。解除安裝可到「設定 → 應用程式 → 已安裝的應用程式」選擇 **Yutping IME**。
@@ -69,6 +69,7 @@ ctest --test-dir build -C Release --output-on-failure
 - 只提供 x64 DLL；32 位元程式尚未支援。
 - 沒有數碼簽署、自動更新或完整離線字庫。
 - 候選窗位置取決於目標程式提供的 TSF／Windows 插入點座標；某些程式可能無法準確定位。
+- AppContainer、Windows 搜尋的候選字整合尚未支援；受限應用程式可能無法載入輸入法或連接查字服務。一般桌面程式的測試結果不能代表這些環境。
 - Google 服務不是本專案所控制；網路服務、可用性和候選結果隨時可能改變。
 
 ## 網路、第三方服務與私隱

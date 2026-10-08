@@ -58,18 +58,36 @@ int EnableForCurrentUser() {
     return SUCCEEDED(hr) ? 0 : 12;
 }
 
+constexpr wchar_t kEnsureUserInputScript[] = LR"PS(
+$ErrorActionPreference='Stop'
+$list=Get-WinUserLanguageList
+$hk=$null
+foreach ($language in $list) {
+    if ($language.LanguageTag -eq 'zh-Hant-HK') { $hk=$language; break }
+}
+$changed=$false
+if ($null -eq $hk) {
+    $list.Add('zh-Hant-HK')
+    $hk=$list[$list.Count-1]
+    $changed=$true
+}
+$tip='0C04:{B0F2B76B-8E5B-4A3C-9D1E-7F2A3C4D5E6F}{C1A2B3C4-D5E6-F7A8-B9C0-D1E2F3A4B5C6}'
+if (-not ($hk.InputMethodTips -contains $tip)) {
+    $hk.InputMethodTips.Add($tip)
+    $changed=$true
+}
+if ($changed) { Set-WinUserLanguageList -LanguageList $list -Force }
+)PS";
+
 int EnsureHongKongLanguage() {
-    // Preserve every existing preferred language and add Hong Kong Chinese only
-    // when missing. Run in the unelevated user's session after UAC, because
+    // Preserve existing languages and keyboards, then persist our user-enabled
+    // input method too. Run in the unelevated user's session after UAC, because
     // UAC may have used a different administrator account.
     wchar_t system[32768];
     if (!GetSystemDirectoryW(system, 32768)) return 40;
     std::wstring powershell = std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
     std::wstring command = L"\"" + powershell +
-        L"\" -NoProfile -NonInteractive -Command \"$ErrorActionPreference='Stop'; "
-        L"$list=Get-WinUserLanguageList; "
-        L"if (-not (@($list | ForEach-Object {$_.LanguageTag}) -contains 'zh-Hant-HK')) "
-        L"{$list.Add('zh-Hant-HK'); Set-WinUserLanguageList -LanguageList $list -Force}\"";
+        L"\" -NoProfile -NonInteractive -Command \"" + kEnsureUserInputScript + L"\"";
     STARTUPINFOW start = { sizeof(start) };
     PROCESS_INFORMATION process = {};
     if (!CreateProcessW(powershell.c_str(), command.data(), nullptr, nullptr,

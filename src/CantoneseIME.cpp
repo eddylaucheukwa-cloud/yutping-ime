@@ -160,6 +160,7 @@ STDMETHODIMP CantoneseIME::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD) {
     TraceActivation("ActivateEx.start", ptim ? S_OK : E_INVALIDARG);
     if (!ptim) return E_INVALIDARG;
+    if (m_pThreadMgr) return E_UNEXPECTED;
     m_foreground = true;
     m_settings = LoadUserSettings();
     m_pThreadMgr = ptim;
@@ -181,22 +182,40 @@ STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD)
     ITfSource* pSource = nullptr;
     HRESULT sourceResult = m_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSource);
     TraceActivation("ThreadSource.QI", sourceResult);
+    if (FAILED(sourceResult) || !pSource) {
+        Deactivate();
+        return FAILED(sourceResult) ? sourceResult : E_NOINTERFACE;
+    }
     if (SUCCEEDED(sourceResult) && pSource) {
         HRESULT advised = pSource->AdviseSink(IID_ITfThreadMgrEventSink,
             static_cast<ITfThreadMgrEventSink*>(this), &m_threadMgrCookie);
         TraceActivation("ThreadSink.Advise", advised);
         pSource->Release();
+        if (FAILED(advised)) {
+            m_threadMgrCookie = TF_INVALID_COOKIE;
+            Deactivate();
+            return advised;
+        }
     }
 
     // Keyboard sink
     ITfKeystrokeMgr* pKeyMgr = nullptr;
     HRESULT keyResult = m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr);
     TraceActivation("KeyboardManager.QI", keyResult);
+    if (FAILED(keyResult) || !pKeyMgr) {
+        Deactivate();
+        return FAILED(keyResult) ? keyResult : E_NOINTERFACE;
+    }
     if (SUCCEEDED(keyResult) && pKeyMgr) {
         HRESULT advised = pKeyMgr->AdviseKeyEventSink(m_clientId,
             static_cast<ITfKeyEventSink*>(this), TRUE);
         TraceActivation("KeyboardSink.Advise", advised);
         pKeyMgr->Release();
+        if (FAILED(advised)) {
+            Deactivate();
+            return advised;
+        }
+        m_keySinkAdvised = true;
     }
 
     // Hidden marshaling window for background-thread callbacks
@@ -245,11 +264,12 @@ STDMETHODIMP CantoneseIME::Deactivate() {
     }
 
     ITfKeystrokeMgr* pKeyMgr = nullptr;
-    if (m_pThreadMgr &&
+    if (m_keySinkAdvised && m_pThreadMgr &&
         SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeyMgr)) && pKeyMgr) {
         pKeyMgr->UnadviseKeyEventSink(m_clientId);
         pKeyMgr->Release();
     }
+    m_keySinkAdvised = false;
 
     if (m_pThreadMgr && m_threadMgrCookie != TF_INVALID_COOKIE) {
         ITfSource* pSource = nullptr;
