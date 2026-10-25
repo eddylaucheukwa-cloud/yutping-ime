@@ -1,0 +1,21 @@
+{
+  "tool": "built-in image_gen",
+  "purpose": "User selection only; no hair background has been installed",
+  "variants": [
+    {
+      "key": "original",
+      "path": "C:/Desktop/claudeproject/yutping/build-check/reference-lucy-hair.jpg",
+      "prompt": "Use case: precise-object-edit / background-extraction. This is restoration of the attached image, not redesign. Produce ONE isolated complete Lucy hair-only illustration from the existing pastel bob in the reference. Preserve the exact silhouette, orientation, round pink-white crown, icy-blue midsection, purple underside fringe and long asymmetrical left forelock with pink curl. Improve edge clarity and resolution, gently complete any clipped tiny hair tips, keep the anime cel shapes and soft rim glow. Exclude the tiny face/neck highlight fragments beneath/left of the hair; no face, head, skin, body, clothing, eyes or new character details. Entire hair and glow fully visible with generous transparent padding. Actual transparent alpha background, no black rectangle, no checkerboard baked in, no text, no border. Faithful restoration, no new strands or changed hairstyle. Output a single high quality standalone image."
+    },
+    {
+      "key": "falling",
+      "path": "C:/Users/user/AppData/Local/Temp/codex-clipboard-62acc315-02c2-497b-a794-897139526ba5.png",
+      "prompt": "Use case: precise-object-edit / background-extraction. Restore ONLY THE UPPER of the TWO hair illustrations in this screenshot. Upper target occupies approximately x96-535, y592-1063 in the 946x2048 screenshot. Ignore the LOWER hair completely. Produce ONE separate complete hair-only image of the UPPER illustration: preserve its existing orientation, soft pink-white crown, icy mint-blue short bob with tapered bottom fringe and the long almost straight vertical forelock toward the right. The source upper crown is cut by a horizontal crop at y592: reconstruct the natural rounded crown above this crop, matching the existing arc and volume. Complete any cropped forelock tip. Keep every visible original hair contour and highlight placement as closely as possible. Improve resolution and clean edges, retain flat anime cel shading with gentle glow and lavender shadows. Remove phone/social interface and all black background. No face, skin, head, character/body or clothing. Single centered complete upper hair with generous padding on actual transparent alpha background; not a collage, not two hairs. No text or frame. Only restoration and quality improvement, no redesign."
+    },
+    {
+      "key": "flowing",
+      "path": "C:/Users/user/AppData/Local/Temp/codex-clipboard-62acc315-02c2-497b-a794-897139526ba5.png",
+      "prompt": "Use case: precise-object-edit / background-extraction. Restore ONLY THE LOWER of the TWO hair illustrations in this screenshot. Lower target occupies approximately x365-812, y1064-1538 in the 946x2048 screenshot. Ignore the UPPER hair completely. Produce ONE separate complete hair-only image of the LOWER illustration: tilted flowing short bob, cyan/icy mint main fill, lavender and pale pink upper hair and shadows, pointed lavender fringe at upper-left, long narrow rear lock on the right flowing down and curving at its tip, and thin longer front strands on the left. Preserve the exact visible silhouette, tilt, strand direction, palette, cel shading and soft glow. The source crown is cut at a horizontal crop around y1064: extend only the missing upper crown into a natural complete arc matching its visible sides. Improve quality and resolution without redesigning the hairstyle. Remove all phone UI and black background. No face, skin, head, body, clothing or full character. One centered fully visible lower hairstyle, all tips and crown within frame, generous transparent padding. Actual transparent alpha background, no black rectangle, no baked checkerboard, no text, no frame, no collage, no second hair."
+    }
+  ]
+}

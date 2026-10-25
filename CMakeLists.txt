@@ -48,6 +48,14 @@ target_compile_options(YutpingApiTest PRIVATE /utf-8)
 set_property(TARGET YutpingApiTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_test(NAME ApiCandidates COMMAND YutpingApiTest)
 
+add_executable(YutpingApiConcurrencyTest tests/ApiConcurrencyTest.cpp)
+target_include_directories(YutpingApiConcurrencyTest PRIVATE src)
+target_link_libraries(YutpingApiConcurrencyTest PRIVATE winhttp advapi32)
+target_compile_definitions(YutpingApiConcurrencyTest PRIVATE UNICODE _UNICODE)
+target_compile_options(YutpingApiConcurrencyTest PRIVATE /utf-8)
+set_property(TARGET YutpingApiConcurrencyTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME QueryConcurrency COMMAND YutpingApiConcurrencyTest)
+
 add_executable(YutpingSettingsTest tests/SettingsTest.cpp src/UserSettings.cpp)
 target_include_directories(YutpingSettingsTest PRIVATE src)
 target_link_libraries(YutpingSettingsTest PRIVATE advapi32)
@@ -56,7 +64,15 @@ target_compile_options(YutpingSettingsTest PRIVATE /utf-8)
 set_property(TARGET YutpingSettingsTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_test(NAME SelectionLearning COMMAND YutpingSettingsTest)
 
-add_executable(YutpingInputTest tests/InputTest.cpp src/CantoneseIME.cpp src/UserSettings.cpp src/Guids.cpp)
+add_executable(YutpingThemeTest tests/ThemeTest.cpp src/CandidateWindow.cpp src/UserSettings.cpp)
+target_include_directories(YutpingThemeTest PRIVATE src)
+target_link_libraries(YutpingThemeTest PRIVATE user32 gdi32 gdiplus advapi32)
+target_compile_definitions(YutpingThemeTest PRIVATE UNICODE _UNICODE)
+target_compile_options(YutpingThemeTest PRIVATE /utf-8)
+set_property(TARGET YutpingThemeTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_test(NAME CandidateThemes COMMAND YutpingThemeTest)
+
+add_executable(YutpingInputTest tests/InputTest.cpp src/UserSettings.cpp src/Guids.cpp)
 target_include_directories(YutpingInputTest PRIVATE src)
 target_link_libraries(YutpingInputTest PRIVATE ole32 oleaut32 uuid user32 advapi32)
 target_compile_definitions(YutpingInputTest PRIVATE UNICODE _UNICODE)
@@ -87,9 +103,9 @@ add_custom_command(OUTPUT "${installer_rc}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateInstallerResource.cmake"
   DEPENDS YutpingIME src/Installer.manifest
   VERBATIM)
-add_executable(YutpingSetup WIN32 src/Installer.cpp src/SettingsWindow.cpp src/UserSettings.cpp src/Guids.cpp "${installer_rc}")
+add_executable(YutpingSetup WIN32 src/Installer.cpp src/SettingsWindow.cpp src/CandidateWindow.cpp src/UserSettings.cpp src/Guids.cpp "${installer_rc}")
 target_include_directories(YutpingSetup PRIVATE src)
-target_link_libraries(YutpingSetup PRIVATE ole32 uuid shell32 advapi32)
+target_link_libraries(YutpingSetup PRIVATE ole32 uuid shell32 advapi32 gdi32)
 target_compile_definitions(YutpingSetup PRIVATE UNICODE _UNICODE)
 target_compile_options(YutpingSetup PRIVATE /utf-8)
 target_link_options(YutpingSetup PRIVATE /MANIFEST:NO)
@@ -101,3 +117,9 @@ add_custom_command(TARGET YutpingSetup POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
     "$<TARGET_FILE:YutpingSetup>" "${CMAKE_CURRENT_SOURCE_DIR}/dist/YutpingUpdate.exe"
   VERBATIM)
+
+configure_file(src/ThemeAssets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/ThemeAssets.rc" @ONLY)
+foreach(theme_target YutpingIME YutpingSetup YutpingThemeTest)
+  target_sources(${theme_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/ThemeAssets.rc")
+  target_link_libraries(${theme_target} PRIVATE gdiplus ole32 msimg32)
+endforeach()

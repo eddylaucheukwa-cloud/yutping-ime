@@ -119,6 +119,8 @@ private:
 
     // Candidate paging
     int m_candPage = 0;
+    int m_candSelection = 0;
+    void _MoveCandidateSelection(int delta);
     void _NextCandPage();
     void _PrevCandPage();
 

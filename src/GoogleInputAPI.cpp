@@ -4,6 +4,8 @@
 #include <codecvt>
 #include <locale>
 #include <cwchar>
+#include <map>
+#include <mutex>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -16,9 +18,30 @@ constexpr unsigned long long kCacheLifetime = 7ULL * 24 * 60 * 60 * 10000000;
 struct HttpSession {
     HINTERNET handle = WinHttpOpen(L"YutpingIME/1.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    HttpSession() { if (handle) WinHttpSetTimeouts(handle, 3000, 3000, 3000, 3000); }
+    HttpSession() {
+        if (!handle) return;
+        WinHttpSetTimeouts(handle, 3000, 3000, 3000, 3000);
+        DWORD protocols = WINHTTP_PROTOCOL_FLAG_HTTP2;
+        WinHttpSetOption(handle, WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL, &protocols, sizeof(protocols));
+    }
     ~HttpSession() { if (handle) WinHttpCloseHandle(handle); }
 };
+
+HttpSession& Session() { static HttpSession session; return session; }
+
+std::mutex flightsMutex;
+std::map<std::wstring, std::vector<CandidateCallback>> flights;
+void FinishQuery(const std::wstring& spelling, CandidateResult result) {
+    std::vector<CandidateCallback> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(flightsMutex);
+        const auto found = flights.find(spelling);
+        if (found == flights.end()) return;
+        callbacks = std::move(found->second);
+        flights.erase(found);
+    }
+    for (auto& callback : callbacks) callback(result);
+}
 
 unsigned long long FileTimeNow() {
     FILETIME time;
@@ -193,6 +216,42 @@ std::string GoogleInputAPI::WStringToUtf8(const std::wstring& ws) {
     return s;
 }
 
+bool GoogleInputAPI::TryCached(const std::wstring& romaji, CandidateResult& result) {
+    std::vector<Candidate> saved;
+    bool fresh = false;
+    if (!ReadCache(romaji, saved, fresh) || !fresh) return false;
+    result = { std::move(saved), true, false };
+    return true;
+}
+
+void GoogleInputAPI::WarmUp() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        extern LONG g_cDllRef;
+        InterlockedIncrement(&g_cDllRef);
+        try {
+            std::thread([] {
+                extern LONG g_cDllRef;
+                struct HoldDll { ~HoldDll() { InterlockedDecrement(&g_cDllRef); } } hold;
+                auto session = Session().handle;
+                if (!session) return;
+                auto connection = WinHttpConnect(session, L"inputtools.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+                if (!connection) return;
+                auto request = WinHttpOpenRequest(connection, L"HEAD", L"/", nullptr,
+                    WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+                if (request) {
+                    DWORD disabled = WINHTTP_DISABLE_REDIRECTS;
+                    WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled));
+                    if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                        WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) WinHttpReceiveResponse(request, nullptr);
+                    WinHttpCloseHandle(request);
+                }
+                WinHttpCloseHandle(connection);
+            }).detach();
+        } catch (...) { InterlockedDecrement(&g_cDllRef); }
+    });
+}
+
 void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb) {
     if (romaji.empty()) {
         cb({});
@@ -207,13 +266,20 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(flightsMutex);
+        auto& waiting = flights[romaji];
+        waiting.push_back(std::move(cb));
+        if (waiting.size() > 1) return;
+    }
+
     extern LONG g_cDllRef;
     InterlockedIncrement(&g_cDllRef);
     try {
-    std::thread([romaji, cb, saved, hasSaved]() {
+    std::thread([romaji, saved, hasSaved]() {
         extern LONG g_cDllRef;
         struct HoldDll { ~HoldDll() { InterlockedDecrement(&g_cDllRef); } } hold;
-        auto fail = [&]() { cb({ saved, hasSaved, true }); };
+        auto fail = [&]() { FinishQuery(romaji, { saved, hasSaved, true }); };
         // Build URL path
         // GET /request?text=<romaji>&itc=yue-hant-t-i0-und&num=27&cp=0&cs=1&ie=utf-8&oe=utf-8
         std::string romajiUtf8 = WStringToUtf8(romaji);
@@ -234,8 +300,7 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
             "&itc=yue-hant-t-i0-und&num=27&cp=0&cs=1&ie=utf-8&oe=utf-8";
         std::wstring wpath(path.begin(), path.end());
 
-        static HttpSession session;
-        HINTERNET hSession = session.handle;
+        HINTERNET hSession = Session().handle;
         if (!hSession) { fail(); return; }
 
         HINTERNET hConnect = WinHttpConnect(hSession,
@@ -282,13 +347,13 @@ void GoogleInputAPI::QueryAsync(const std::wstring& romaji, CandidateCallback cb
         if (networkOkay && body.rfind("[\"SUCCESS\"", 0) == 0) {
             auto parsed = ParseResponse(body);
             WriteCache(romaji, parsed);
-            cb({ std::move(parsed), false, false });
+            FinishQuery(romaji, { std::move(parsed), false, false });
         } else {
             fail();
         }
     }).detach();
     } catch (...) {
         InterlockedDecrement(&g_cDllRef);
-        cb({ {}, false, true });
+        FinishQuery(romaji, { std::move(saved), hasSaved, true });
     }
 }

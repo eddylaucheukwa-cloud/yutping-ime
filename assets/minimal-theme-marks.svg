@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="900" height="390" viewBox="0 0 900 390">
+  <title>David Lucy — minimal geometric marks</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L900 0 L900 390 L0 390 Z" fill="#121122"/>
+    <text transform="matrix(1 0 0 1 32 38)" x="0" y="0" xml:space="preserve" font-family="&apos;Segoe UI&apos;" font-size="20" fill="#ecf7f4"><tspan x="0" y="0">MINIMAL / DAVID + LUCY</tspan></text>
+    <text transform="matrix(1 0 0 1 32 66)" x="0" y="0" xml:space="preserve" font-family="&apos;Segoe UI&apos;" font-size="12" fill="#b2c1c9"><tspan x="0" y="0">Three flat shapes per character · no outlines · no micro-details</tspan></text>
+    <text transform="matrix(1 0 0 1 95 280)" x="0" y="0" xml:space="preserve" font-family="&apos;Segoe UI&apos;" font-size="15" fill="#ecf7f4"><tspan x="0" y="0">LUCY</tspan></text>
+    <path d="M130 176 L130 164 C130 139.699 149.699 120 174 120 C198.301 120 218 139.699 218 164 L218 176 Z" fill="#f2edfa"/>
+    <path d="M174 164 L218 164 L218 196 L174 196 Z" fill="#d7d1f2"/>
+    <path d="M130 164 L150 164 L150 212 L130 232 Z" fill="#a6e7ee"/>
+    <text transform="matrix(1 0 0 1 375 280)" x="0" y="0" xml:space="preserve" font-family="&apos;Segoe UI&apos;" font-size="15" fill="#ecf7f4"><tspan x="0" y="0">DAVID</tspan></text>
+    <path d="M402 152 L430 128 L454 152 L454 220 L418 220 Z" fill="#f5d55c"/>
+    <path d="M454 152 L478 128 L506 152 L490 220 L454 220 Z" fill="#f5d55c"/>
+    <path d="M418 180 L494 180 L490 192 L422 192 Z" fill="#b3e58c"/>
+    <text transform="matrix(1 0 0 1 655 280)" x="0" y="0" xml:space="preserve" font-family="&apos;Segoe UI&apos;" font-size="15" fill="#ecf7f4"><tspan x="0" y="0">DAVID &amp; LUCY</tspan></text>
+    <path d="M661 158 L661 149 C661 130.775 675.775 116 694 116 C712.225 116 727 130.775 727 149 L727 158 Z" fill="#f2edfa"/>
+    <path d="M694 149 L727 149 L727 173 L694 173 Z" fill="#d7d1f2"/>
+    <path d="M661 149 L676 149 L676 185 L661 200 Z" fill="#a6e7ee"/>
+    <path d="M736 140 L757 122 L775 140 L775 191 L748 191 Z" fill="#f5d55c"/>
+    <path d="M775 140 L793 122 L814 140 L802 191 L775 191 Z" fill="#f5d55c"/>
+    <path d="M748 161 L805 161 L802 170 L751 170 Z" fill="#b3e58c"/>
+  </g>
+</svg>

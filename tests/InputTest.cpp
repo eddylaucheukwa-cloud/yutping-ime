@@ -3,6 +3,15 @@
 #include <iostream>
 #include <stdexcept>
 
+// Keep this process's simulated keys independent of the user's real keyboard.
+static BYTE testKeyState[256] = {};
+static SHORT WINAPI TestGetKeyState(int key) {
+    return key >= 0 && key < 256 && (testKeyState[key] & 0x80) ? static_cast<SHORT>(0x8000) : 0;
+}
+#define GetKeyState TestGetKeyState
+#include "../src/CantoneseIME.cpp"
+#undef GetKeyState
+
 // Exercise the real IME keyboard/composition code with an in-memory TSF host.
 // No registration, user settings writes, visible windows, or network required.
 LONG g_cDllRef = 0;
@@ -10,6 +19,14 @@ HINSTANCE g_hInst = GetModuleHandleW(nullptr);
 static std::vector<CandidateCallback> requests;
 static std::vector<std::wstring> spellings;
 static int hidden = 0;
+static int lastHighlightedRow = 0;
+static std::vector<Candidate> cachedCandidates;
+bool GoogleInputAPI::TryCached(const std::wstring& spelling, CandidateResult& result) {
+    if (spelling != L"neiho" || cachedCandidates.empty()) return false;
+    result = { cachedCandidates, true, false };
+    return true;
+}
+void GoogleInputAPI::WarmUp() {}
 void GoogleInputAPI::QueryAsync(const std::wstring& spelling, CandidateCallback callback) {
     spellings.push_back(spelling);
     requests.push_back(std::move(callback));
@@ -19,7 +36,7 @@ CandidateWindow::~CandidateWindow() = default;
 bool CandidateWindow::RegisterClass(HINSTANCE) { return true; }
 void CandidateWindow::Hide() { ++hidden; }
 void CandidateWindow::Show(const std::wstring&, const std::vector<Candidate>&, POINT,
-    int, int, bool, bool, bool) {}
+    int, int, bool, bool, bool, int selectedRow) { lastHighlightedRow = selectedRow; }
 
 #define UNUSED_METHOD(name, args) STDMETHODIMP name args override { return E_NOTIMPL; }
 #define REFCOUNTED \
@@ -185,6 +202,7 @@ class InputTest {
     CantoneseIME ime;
 public:
     InputTest() {
+        std::fill_n(testKeyState, 256, BYTE(0));
         ime._SetContext(&context);
         ime.m_caretValid = true;
         ime.m_lastCaretPt = {100, 100};
@@ -252,6 +270,97 @@ public:
             t.Result(candidates);
             t.Key(VK_OEM_PLUS); t.Key(VK_SPACE);
             Check(t.context.doc.text == L"word" + std::to_wstring(size), "Space selects current page");
+        }
+        for (int size : {4, 6, 9}) {
+            std::vector<Candidate> candidates;
+            for (int i = 0; i < size * 2 + 2; ++i) candidates.push_back({L"word" + std::to_wstring(i), L"", 5});
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                t.Key(VK_DOWN);
+                Check(t.ime.m_candPage == 0, "Down moves to candidate two instead of the next page");
+                Check(lastHighlightedRow == 1, "the popup receives the second-row keyboard highlight");
+                t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word1", "Space commits the highlighted candidate");
+            }
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                t.Key(VK_UP); t.Key(VK_DOWN); t.Key(VK_DOWN); t.Key(VK_UP); t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word1", "Up moves one row and stops at the beginning");
+            }
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                for (int i = 0; i < size; ++i) t.Key(VK_DOWN);
+                Check(t.ime.m_candPage == 1, "Down crosses to the next page only after its last row");
+                t.Key(VK_UP); t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word" + std::to_wstring(size - 1), "Up across a page boundary selects the previous last row");
+            }
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                for (int i = 0; i < size * 3; ++i) t.Key(VK_DOWN);
+                t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word" + std::to_wstring(size * 2 + 1), "Down stops at the final candidate of a short last page");
+            }
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                t.Key(VK_DOWN); t.Key(VK_OEM_PLUS); t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word" + std::to_wstring(size), "explicit next page resets its highlight to the first candidate");
+            }
+            {
+                InputTest t; t.ime.m_settings.pageSize = size;
+                t.Type("neiho"); t.Result(candidates);
+                t.Key(VK_OEM_PLUS); t.Key(VK_DOWN); t.Key(VK_OEM_MINUS); t.Key(VK_SPACE);
+                Check(t.context.doc.text == L"word0", "explicit previous page resets its highlight to the first candidate");
+            }
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Key(VK_DOWN); t.Key(VK_DOWN); t.Key(VK_UP); t.Key(VK_SPACE);
+            t.Result({{L"你好", L"", 5}, {L"你可", L"", 5}, {L"您好", L"", 5}});
+            Check(t.context.doc.text == L"你可", "arrows before the response preserve order and Space selects the requested row");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Result({{L"你好", L"", 5}, {L"你可", L"", 5}});
+            t.Key(VK_DOWN); t.Type("u"); t.Result({{L"您好", L"", 6}, {L"妳好", L"", 6}}); t.Key(VK_SPACE);
+            Check(t.context.doc.text == L"您好", "editing the spelling resets the highlight");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Result({{L"你好", L"", 5}, {L"你可", L"", 5}});
+            t.Key(VK_DOWN); t.Key('1');
+            Check(t.context.doc.text == L"你好", "number keys still select the displayed row number");
+            t.Type("neiho"); t.Result({{L"你好", L"", 5}, {L"你可", L"", 5}});
+            t.Key(VK_DOWN); t.Key(VK_RETURN);
+            Check(t.context.doc.text == L"你好neiho", "Enter remains raw after navigating");
+        }
+        {
+            InputTest t;
+            t.Type("neiho"); t.Result({{L"你好", L"nei hou", 5}, {L"你", L"nei", 3}});
+            t.Key(VK_DOWN); t.Key(VK_SPACE);
+            Check(t.context.doc.text == L"你ho" && t.ime.m_buffer == L"ho", "navigating to a prefix preserves the unselected spelling");
+            t.Result({{L"好", L"hou", 2}, {L"可", L"ho", 2}}); t.Key(VK_SPACE);
+            Check(t.context.doc.text == L"你好", "partial selection restarts the remaining word at its first candidate");
+        }
+        {
+            InputTest t;
+            auto punctuation = [&](WPARAM key, bool shift) {
+                testKeyState[VK_SHIFT] = shift ? 0x80 : 0;
+                t.Key(key);
+                testKeyState[VK_SHIFT] = 0;
+            };
+            punctuation(VK_OEM_7, false); punctuation(VK_OEM_7, true);
+            punctuation(VK_OEM_4, false); punctuation(VK_OEM_6, false);
+            punctuation(VK_OEM_4, true); punctuation(VK_OEM_6, true);
+            Check(t.context.doc.text == L"《》「」『』", "quote keys produce book-title marks while brackets retain Chinese quotes");
+            t.ime.m_settings.chinesePunctuation = false;
+            Check(!t.ime._IsKeyEaten(VK_OEM_7), "disabling punctuation lets literal quotes through");
+            t.ime.m_settings.chinesePunctuation = true; t.ime.m_englishMode = true;
+            Check(!t.ime._IsKeyEaten(VK_OEM_7) && !t.ime._IsKeyEaten(VK_OEM_4), "English quotes and brackets pass through");
         }
         {
             InputTest t;
@@ -327,6 +436,10 @@ public:
             ime._ObserveToggleDown(VK_SHIFT, 0, true, true, false);
             Check(ime._ReleaseToggle(VK_SHIFT), "Ctrl then Shift toggles");
             Check(!ime._ReleaseToggle(VK_CONTROL), "second modifier release cannot toggle again");
+            testKeyState['W'] = 0x80;
+            ime._ObserveToggleDown(VK_SHIFT, 0, true, true, false);
+            Check(!ime._ReleaseToggle(VK_SHIFT), "a held game key prevents Ctrl Shift from toggling");
+            testKeyState['W'] = 0;
             ime._ObserveToggleDown(VK_RSHIFT, 0, false, true, false);
             ime._ObserveToggleDown(VK_LCONTROL, 0, true, true, false);
             Check(ime._ReleaseToggle(VK_LCONTROL), "Shift then Ctrl toggles");
@@ -418,6 +531,27 @@ public:
             callback({ {{L"你好", L"", 5}}, false, false });
             t.ime._ReceiveCandidates();
             Check(t.context.doc.text == L"neiho" && t.ime.m_buffer.empty(), "switch never writes into disabled context");
+        }
+        {
+            InputTest t;
+            cachedCandidates = {{L"你好", L"nei hou", 5}};
+            const auto before = requests.size();
+            t.Type("neiho");
+            Check(!t.ime.m_queryPending && t.ime.m_candidates.size() == 1, "cached candidates appear without waiting for timer or message dispatch");
+            t.Key(VK_SPACE);
+            Check(t.context.doc.text == L"你好" && requests.size() == before, "fast Space selects cached Chinese without a request");
+            cachedCandidates.clear();
+        }
+        {
+            InputTest t;
+            t.Type("nei"); t.ime._SendQuery();
+            const auto old = requests.back();
+            cachedCandidates = {{L"你好", L"nei hou", 5}};
+            t.Type("ho"); t.Key(VK_SPACE);
+            old({{{L"你", L"nei", 3}}, false, false});
+            t.ime._ReceiveCandidates();
+            Check(t.context.doc.text == L"你好" && t.ime.m_buffer.empty(), "old network result cannot replace immediate cached selection");
+            cachedCandidates.clear();
         }
         std::cout << "Input behavior checks passed\n";
     }

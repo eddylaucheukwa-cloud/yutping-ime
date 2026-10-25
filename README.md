@@ -26,19 +26,76 @@
 
 查字尚未完成時按 `Space`，程式會等候該次結果，保留之後輸入的字母，依次處理；不會因網路較慢而自動輸出英文。沒有候選結果時拼音會留待修改，也可按 `Enter` 輸出原文。快速輸入的查詢會合併，並重用網路連線；實際速度仍受網路及 Google 服務影響。
 
+命中有效本機快取時，候選字會立即顯示，不再等待查詢計時器或另一輪視窗訊息。啟用輸入法後，程式會在背景向 Google 發出一次不帶輸入文字的 HEAD 請求，預先準備連線；查字支援 HTTP/2，同一程序內相同拼法的進行中查詢會共用一個請求。未載入完成時按 Space，選字窗會顯示「已收到選字 · 等候中」，查字回覆後自動完成選字。這些改動不能消除首次網路連線及遠端服務的延遲。
+
 | 操作 | 按鍵 |
 | --- | --- |
 | 輸入粵拼 | `A`–`Z`；`'` 分隔音節 |
-| 揀選當頁候選字 | `1`–`6` 或滑鼠點選 |
-| 下一頁／上一頁 | `=`／`-`、`.`／`,`、`]`／`[`、`Page Down`／`Page Up`、右／左或下／上方向鍵 |
-| 選當頁第一個候選字 | `Space` |
+| 揀選當頁候選字 | `1`–`9`（按當頁編號）或滑鼠點選 |
+| 下一頁／上一頁 | `=`／`-`、`.`／`,`、`]`／`[`、`Page Down`／`Page Up`、右／左方向鍵 |
+| 逐項移動選字高亮 | 下／上方向鍵；到頁尾／頁首後才跨頁，到整份清單兩端時停留 |
+| 確認高亮候選字 | `Space`；翻頁後預設高亮當頁第一個字 |
 | 輸出原始粵拼 | `Enter` |
 | 刪除／取消組字 | `Backspace`／`Esc` |
 | 切換中英文模式 | 單獨按 `Ctrl + Shift`，放開其中一鍵時切換；可在設定改為 `F12` |
 
 候選窗會在組字期間顯示拼法、候選字和讀音註記；查詢下一個拼法時，舊候選字會暫時淡化，避免視窗每打一個字就消失。候選窗跟隨 Windows 應用程式的深色／淺色模式。中文模式下，一般標點符號會轉換為中文標點。
 
+未組字時，單引號鍵 `'` 輸出 `《`，雙引號鍵 `"`（Shift + 單引號）輸出 `》`；`[`／`]` 仍為 `「`／`」`，`{`／`}` 為 `『`／`』`。組字中的單引號保留分隔音節的用途。英文模式或關閉中文標點時，標點鍵會照常交給應用程式。
+
 在開始功能表開啟「**粵拼輸入法設定**」，可選每頁顯示 4／6／9 個候選字、開關中文標點和常用字排序、選擇 Ctrl + Shift 或 F12 切換鍵，也可清除快取及常用字紀錄。這些設定適用於新輸入，毋須重新啟動電腦。
+
+亦可選擇選字窗主題，按「**預覽主題**」比較外觀，然後儲存。預覽不會查詢網路或改動目前輸入的文字。
+
+### 主題一覽
+
+<table>
+<tr>
+<td align="center"><img src="docs/themes/system.png" width="240" alt="System"><br><b>System (match Windows)</b></td>
+<td align="center"><img src="docs/themes/terminal.png" width="240" alt="Terminal"><br><b>Terminal</b></td>
+<td align="center"><img src="docs/themes/game-boy.png" width="240" alt="Game Boy"><br><b>Game Boy</b></td>
+<td align="center"><img src="docs/themes/lucy-afterglow.png" width="240" alt="Lucy · Afterglow"><br><b>Lucy · Afterglow</b></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/themes/lucy-flow.png" width="240" alt="Lucy · Flow"><br><b>Lucy · Flow</b></td>
+<td align="center"><img src="docs/themes/david-lucy-earthrise.png" width="240" alt="David &amp; Lucy · Earthrise"><br><b>David &amp; Lucy · Earthrise</b></td>
+<td align="center"><img src="docs/themes/david-lucy-embrace.png" width="240" alt="David &amp; Lucy · Embrace"><br><b>David &amp; Lucy · Embrace</b></td>
+<td align="center"><img src="docs/themes/david-lucy-blue-marble.png" width="240" alt="David &amp; Lucy · Blue Marble"><br><b>David &amp; Lucy · Blue Marble</b></td>
+</tr>
+</table>
+
+以上為實際選字窗的截圖（`System` 會跟隨 Windows 的深色／淺色模式，圖中為深色）。
+
+| 主題 | 外觀 |
+| --- | --- |
+| System (match Windows) | 原有簡約介面，自動切換深色／淺色；右上角保留「粵拼」 |
+| Terminal | 純黑白灰的等寬輸出、提示符與區塊游標、行號欄及 `[-]`／`[=]` 翻頁提示；右上角為黑白 `>_` 小終端圖示 |
+| Game Boy | 縮小的 DMG 螢幕邊框、四色 LCD、電源燈及方框選字標記；右上角保留「粵拼」 |
+| Lucy · Afterglow | Lucy 的髮色漸變（淡紫 → 冰藍 → 薄荷綠）用於輸入欄英文及選字高亮；高亮由左至右從 100% 淡至 55% 不透明，讓背景透出；髮絲原圖以 85% 強度、濾色（screen）方式顯示於右側，左側以深色漸層保護文字 |
+| Lucy · Flow | 同上設計，背景改用飄逸髮絲圖，顯示強度 70% |
+| David & Lucy · Earthrise | Apollo 8 Earthrise 的地球與月面背景；薄荷綠實色高亮，左下方帶紫色殘影 |
+| David & Lucy · Embrace | 擁抱人物 22%、大型地球照片 32%，背景延伸至頂欄及頁數欄；高亮與 Earthrise 相同 |
+| David & Lucy · Blue Marble | 與 Embrace 相同的大型地球，移除背景人物 |
+
+兩款 Lucy 及三款 David & Lucy 共用同一套 Edgerunner 外框：四角削邊（視窗本身亦按削角裁切，角位透明）、內框四角同樣削邊、兩側刻度線、上下各一條長色帶；頂欄只顯示輸入的英文及游標，不顯示主題圖示；候選字編號沿用原有點陣（無反鋸齒）Consolas 字體及方框，選中時編號轉為綠色；頁尾只顯示頁碼，左右兩側仍可點擊翻頁，鍵盤 `-`／`=` 亦可。
+
+主題以選字和減少遮擋為優先，不含動畫或閃爍效果。六個候選字時，各主題視窗均不超過 256 × 278 像素。4／6／9 個候選字使用相同字體大小，視窗按列數調整高度；背景保持固定大小與上方位置，候選字減少時從底部裁切。背景、選字高亮及輸入欄漸變只在主題或尺寸改變時產生一次，其後每次重繪直接使用快取，打字速度不受影響。候選區小字對比、版面尺寸、視窗削角及滑鼠選字／翻頁均有自動檢查。
+
+兩款 Lucy 及三款 David & Lucy 的**頂部輸入英文**使用內嵌的自訂字體，保留核准的緊湊字距。字體只載入目前程式，不需安裝到 Windows，也不會改變其他應用程式輸出的字體。
+
+David 主題、Neon Arcade 及 Paper & Ink 已移除；舊設定若選用這些主題，更新後會回到「System (match Windows)」，其他主題設定保留。
+
+削角及分段框線參考 [Cyberpunk 2077 官方介面示例](https://www.cyberpunk.net/en/news/49591/update-2-1-accessibility-features)。Lucy 背景使用使用者提供的動畫髮絲原圖及其修復版本；David & Lucy 背景使用 NASA／Bill Anders 的 [Apollo 8 Earthrise](https://science.nasa.gov/resource/apollo-8s-iconic-earthrise/) 及 NASA 的 Blue Marble 照片，屬藝術構圖，非原照片的地球視角大小。圖片內嵌於安裝程式及輸入法，無須另外下載。來源與使用說明見 [圖片鳴謝](assets/ATTRIBUTION.md)。
+
+### 本次更新
+
+- 主題名稱改為英文：System (match Windows)、Terminal、Game Boy、Lucy · Afterglow、Lucy · Flow、David & Lucy · Earthrise、David & Lucy · Embrace、David & Lucy · Blue Marble。
+- 移除 David 主題（原設定會回到 System）。
+- Lucy 與 David & Lucy 改用新的 Edgerunner 外框：視窗四角削邊並透明裁切、內框削角、上下長色帶，移除頂欄及頁尾圖示。
+- Lucy：髮色漸變高亮由左至右淡出；背景髮絲提高至 85%（Afterglow）／70%（Flow），並以深色漸層保護文字。
+- David & Lucy：薄荷綠實色高亮配左下紫色殘影；Earthrise 移除地球／月球翻頁圖示。
+- 候選字編號恢復原有點陣字體及方框，選中時轉為綠色。
+- 選字視窗的功能、按鍵、尺寸及點擊範圍不變。
 
 單按 Shift 或使用 Ctrl + Shift + 其他鍵不會切換模式。等待查字時也可以切換：尚未選字的粵拼會保留為英文，之後排隊的輸入會依次處理，舊查字結果不會再改寫文字。若 Windows 把 Ctrl + Shift 設為切換輸入語言，系統可能先處理這個組合鍵；可更改 Windows 的進階鍵盤快捷鍵，或在本輸入法設定改用 F12。
 
@@ -84,3 +141,4 @@ ctest --test-dir build -C Release --output-on-failure
 ## 授權
 
 請參閱 [LICENSE](LICENSE)。
+圖片及自訂字體另見 [素材來源說明](assets/ATTRIBUTION.md)，不包含在程式碼的 MIT 授權內。

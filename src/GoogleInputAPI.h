@@ -20,6 +20,8 @@ public:
     // The caller owns cancellation and UI-thread dispatch. No worker retains
     // an IME or API object after the host application unloads the DLL.
     static void QueryAsync(const std::wstring& romaji, CandidateCallback cb);
+    static bool TryCached(const std::wstring& romaji, CandidateResult& result);
+    static void WarmUp();
     static std::vector<Candidate> ParseResponse(const std::string& json);
     static void ClearCache();
 

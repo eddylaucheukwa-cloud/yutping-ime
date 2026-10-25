@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="640" viewBox="0 0 600 640">
+  <defs>
+    <clipPath id="clip-path-1">
+      <path d="M86 561 L80 429 L125 313 L103 257 L208 185 L232 173 L278 180 L248 130 L259 97 L298 68 L394 68 L428 103 L429 173 L380 199 L386 214 L361 222 L344 268 L326 216 L352 229 L413 213 L403 229 L435 229 L439 247 L379 262 L293 396 L244 347 L207 368 L262 443 L239 463 L224 561 Z"/>
+    </clipPath>
+    <clipPath id="clip-path-2">
+      <path d="M429 104 L441 83 L513 225 L486 271 L507 287 L476 566 L311 566 L167 497 L138 525 L105 520 L101 475 L133 452 L239 463 L316 412 L353 331 L350 306 L379 262 L439 247 L435 229 L403 229 L413 213 L361 229 L344 268 L353 229 L361 221 L386 213 L381 199 L429 173 Z"/>
+    </clipPath>
+  </defs>
+  <title>David &amp; Lucy — Blender geometric study</title>
+  <g id="_01___Lucy_silhouette" data-name="01 · Lucy silhouette" clip-path="url(#clip-path-1)">
+    <path id="Lucy___Blender_silhouette" data-name="Lucy · Blender silhouette" d="M86 561 L80 429 L125 313 L103 257 L208 185 L232 173 L278 180 L248 130 L259 97 L298 68 L394 68 L428 103 L429 173 L380 199 L386 214 L361 222 L344 268 L326 216 L352 229 L413 213 L403 229 L435 229 L439 247 L379 262 L293 396 L244 347 L207 368 L262 443 L239 463 L224 561 Z" fill="#22376b"/>
+    <path id="Lower_body_shadow" data-name="Lower body shadow" d="M80 429 L125 313 L207 368 L228 407 L172 466 L86 561 Z" fill="#091540"/>
+    <path id="Shoulder_plane" data-name="Shoulder plane" d="M103 257 L208 185 L232 173 L278 180 L311 225 L244 347 L207 368 L125 313 Z" fill="#316dac"/>
+    <path id="Torso_fold" data-name="Torso fold" d="M103 257 L244 250 L244 347 L207 368 L125 313 Z" fill="#22376b"/>
+    <path id="Hair_crown" data-name="Hair crown" d="M248 130 L259 97 L298 68 L394 68 L428 103 L429 173 L361 222 L310 187 L278 180 Z" fill="#7bcaf4"/>
+    <path id="Hair_side_shadow" data-name="Hair side shadow" d="M248 130 L259 97 L298 68 L310 68 L310 187 L278 180 Z" fill="#316dac"/>
+    <path id="Hair_lower_plane" data-name="Hair lower plane" d="M310 147 L429 125 L429 173 L361 222 L310 187 Z" fill="#5296c2"/>
+    <path id="Forearm_plane" data-name="Forearm plane" d="M244 347 L293 396 L379 262 L439 247 L435 229 L403 229 L413 213 L352 229 L344 268 L326 216 L311 290 Z" fill="#316dac"/>
+    <path id="Forearm_light" data-name="Forearm light" d="M293 396 L379 262 L439 247 L436 238 L374 254 L311 359 Z" fill="#7bcaf4"/>
+    <path id="Violet_backlight" data-name="Violet backlight" d="M103 257 L208 185 L232 173 L278 180 L266 187 L234 181 L212 193 L110 262 Z" fill="#a767e7"/>
+    <path id="Violet_hip_edge" data-name="Violet hip edge" d="M125 313 L80 429 L86 561 L92 561 L87 430 L130 319 Z" fill="#a767e7"/>
+  </g>
+  <g id="_02___David_embrace" data-name="02 · David embrace" clip-path="url(#clip-path-2)">
+    <path id="David___Blender_silhouette" data-name="David · Blender silhouette" d="M429 104 L441 83 L513 225 L486 271 L507 287 L476 566 L311 566 L167 497 L138 525 L105 520 L101 475 L133 452 L239 463 L316 412 L353 331 L350 306 L379 262 L439 247 L435 229 L403 229 L413 213 L361 229 L344 268 L353 229 L361 221 L386 213 L381 199 L429 173 Z" fill="#a7bc59"/>
+    <path id="Head_in_shadow" data-name="Head in shadow" d="M441 83 L513 225 L486 271 L507 287 L439 268 L413 213 L429 173 L429 104 Z" fill="#234e43"/>
+    <path id="Collar_light" data-name="Collar light" d="M379 262 L439 247 L486 271 L507 287 L439 309 L350 306 Z" fill="#a6c94f"/>
+    <path id="Jacket_shadow" data-name="Jacket shadow" d="M350 306 L439 309 L507 287 L476 566 L400 566 L353 440 L316 412 L353 331 Z" fill="#47764d"/>
+    <path id="Lower_jacket_shade" data-name="Lower jacket shade" d="M353 440 L400 566 L476 566 L486 460 L429 423 L395 395 Z" fill="#315d45"/>
+    <path id="Sleeve_plane" data-name="Sleeve plane" d="M316 412 L353 331 L395 395 L486 460 L380 497 L239 463 Z" fill="#8cb65a"/>
+    <path id="Reflective_sleeve_band" data-name="Reflective sleeve band" d="M339 360 L351 335 L395 395 L486 433 L483 460 L380 417 Z" fill="#74cda4"/>
+    <path id="Embracing_forearm" data-name="Embracing forearm" d="M101 475 L133 452 L239 463 L316 412 L380 497 L311 566 L167 497 L138 525 L105 520 Z" fill="#acc45d"/>
+    <path id="Arm_underside" data-name="Arm underside" d="M167 497 L311 566 L355 542 L284 507 L238 490 L166 476 L138 501 L103 493 L105 520 L138 525 Z" fill="#799747"/>
+    <path id="Green_collar_rim" data-name="Green collar rim" d="M379 262 L439 247 L486 271 L507 287 L498 294 L484 279 L438 255 L385 269 Z" fill="#9ced9a"/>
+    <path id="Green_outside_light" data-name="Green outside light" d="M441 83 L513 225 L486 271 L507 287 L476 566 L470 566 L499 291 L478 271 L506 225 Z" fill="#78e69a"/>
+  </g>
+</svg>

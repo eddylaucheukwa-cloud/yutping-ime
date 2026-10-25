@@ -8,6 +8,11 @@ LONG g_cDllRef = 0;
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--live") {
+        if (argc > 2 && std::string(argv[2]) == "--warm") {
+            GoogleInputAPI::WarmUp();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::cout << "Connection warm-up lead time: 1000 ms (simulated typing interval)\n";
+        }
         for (const std::wstring spelling : {L"neiho", L"ho", L"neihou", L"neiho"}) {
             auto promise = std::make_shared<std::promise<CandidateResult>>();
             auto future = promise->get_future();
@@ -70,6 +75,8 @@ int main(int argc, char** argv) {
         static_cast<DWORD>(entry.size() * sizeof(wchar_t)));
     RegCloseKey(key);
     if (wrote != ERROR_SUCCESS) return 6;
+    CandidateResult immediate;
+    if (!GoogleInputAPI::TryCached(spelling, immediate) || !immediate.cached || immediate.candidates.size() != 1) return 13;
     bool called = false, correct = false;
     GoogleInputAPI::QueryAsync(spelling, [&](CandidateResult result) {
         called = true;

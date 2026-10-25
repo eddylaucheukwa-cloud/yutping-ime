@@ -1,4 +1,5 @@
 #include "CantoneseIME.h"
+#include <algorithm>
 #include <new>
 #include <cstdint>
 #include <cstdio>
@@ -252,6 +253,7 @@ STDMETHODIMP CantoneseIME::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD)
         focus->Release();
     }
 
+    GoogleInputAPI::WarmUp();
     TraceActivation("ActivateEx.complete", S_OK);
     return S_OK;
 }
@@ -357,9 +359,9 @@ static wchar_t VkToChinesePunct(WPARAM wp, bool shift = (GetKeyState(VK_SHIFT) &
     case VK_OEM_PLUS:    return shift ? L'＋'  : L'＋';   // + / =
     case VK_OEM_4:       return shift ? L'『'  : L'「';   // { / [
     case VK_OEM_6:       return shift ? L'』'  : L'」';   // } / ]
-    case VK_OEM_7:       return shift ? L'」'  : L'「';   // " / '
+    case VK_OEM_7:       return shift ? L'》'  : L'《';   // " / '
     case VK_OEM_5:       return shift ? L'｜'  : L'、';   // pipe / backslash
-    case VK_OEM_102:     return L'《';
+    case VK_OEM_102:     return shift ? L'》' : L'《';
     case VK_OEM_3:       return shift ? L'～'  : L'～';   // ~ / `
     case '1': case '2': case '3': case '4': case '5':
     case '6': case '7': case '8': case '9':
@@ -451,7 +453,7 @@ bool CantoneseIME::_IsKeyEaten(WPARAM wp) const {
             case VK_NEXT:     case VK_DOWN: case VK_RIGHT:
             case VK_OEM_MINUS: case VK_OEM_COMMA: case VK_OEM_4:
             case VK_PRIOR:    case VK_UP:   case VK_LEFT:
-                return true;   // paging keys
+                return true;   // candidate navigation and paging
             }
         }
     }
@@ -641,7 +643,7 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
 
     case VK_SPACE:
         // Space selects Chinese, even if it arrives before the API response.
-        _CommitCandidate(m_candPage * m_settings.pageSize);
+        _CommitCandidate(m_candSelection);
         break;
 
     case VK_RETURN:
@@ -665,7 +667,6 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
     case VK_OEM_PERIOD:  // .
     case VK_OEM_6:       // ]
     case VK_NEXT:        // Page Down
-    case VK_DOWN:
     case VK_RIGHT:
         if (m_queryPending) {
             m_queuedKeys.push_back({ wp, shift });
@@ -677,12 +678,19 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
     case VK_OEM_COMMA:   // ,
     case VK_OEM_4:       // [
     case VK_PRIOR:       // Page Up
-    case VK_UP:
     case VK_LEFT:
         if (m_queryPending) {
             m_queuedKeys.push_back({ wp, shift });
             _SendQuery();
         } else _PrevCandPage();
+        break;
+
+    case VK_DOWN:
+    case VK_UP:
+        if (m_queryPending) {
+            m_queuedKeys.push_back({ wp, shift });
+            _SendQuery();
+        } else _MoveCandidateSelection(wp == VK_DOWN ? 1 : -1);
         break;
 
     default:
@@ -887,13 +895,26 @@ bool CantoneseIME::_InsertText(TfEditCookie ec, ITfContext* pic, const std::wstr
 // Candidate query & window
 // ============================================================
 void CantoneseIME::_RequestQuery() {
+    if (m_hMarshalWnd) KillTimer(m_hMarshalWnd, QUERY_TIMER);
+    m_queryScheduled = false;
     m_candPage = 0;  // reset to first page on new query
+    m_candSelection = 0;
     m_candidates.clear();
     m_queryPending = true;
     {
         std::lock_guard<std::mutex> lock(m_queryState->mutex);
         ++m_queryState->generation;
         m_queryState->ready = false;
+    }
+    CandidateResult cached;
+    if (GoogleInputAPI::TryCached(m_buffer, cached)) {
+        {
+            std::lock_guard<std::mutex> lock(m_queryState->mutex);
+            m_queryState->result = std::move(cached);
+            m_queryState->ready = true;
+        }
+        _ReceiveCandidates();
+        return;
     }
     _UpdateCandidateWindow();
     // Coalesce a burst of letters; a selection key flushes this timer immediately.
@@ -919,6 +940,7 @@ void CantoneseIME::_SendQuery() {
         state->ready = true;
         PostMessageW(state->window, WM_CANDIDATES_READY, 0, 0);
     });
+    _ReceiveCandidates(); // Consume an immediate cache callback without waiting for another message.
 }
 
 void CantoneseIME::_ReceiveCandidates() {
@@ -937,6 +959,7 @@ void CantoneseIME::_ReceiveCandidates() {
     m_queryPending = false;
     if (m_settings.learnChoices) RankCandidates(m_buffer, m_candidates);
     m_candPage = 0;
+    m_candSelection = 0;
     _UpdateCandidateWindow();
     const int deferred = m_deferredCandidate;
     m_deferredCandidate = -1;
@@ -999,6 +1022,12 @@ void CantoneseIME::_DrainQueuedKeys() {
     m_queuedKeys.insert(m_queuedKeys.end(), queued.begin(), queued.end());
 }
 
+void CantoneseIME::_MoveCandidateSelection(int delta) {
+    if (m_candidates.empty()) return;
+    m_candSelection = (std::clamp)(m_candSelection + delta, 0, static_cast<int>(m_candidates.size()) - 1);
+    _UpdateCandidateWindow();
+}
+
 void CantoneseIME::_NextCandPage() {
     if (m_candidates.empty()) return;
     int totalPages = ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize;
@@ -1008,6 +1037,7 @@ void CantoneseIME::_NextCandPage() {
     _Dbg(dbuf);
     if (totalPages <= 1) return;
     m_candPage = (m_candPage + 1) % totalPages;
+    m_candSelection = m_candPage * m_settings.pageSize;
     _UpdateCandidateWindow();
 }
 
@@ -1016,6 +1046,7 @@ void CantoneseIME::_PrevCandPage() {
     int totalPages = ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize;
     if (totalPages <= 1) return;
     m_candPage = (m_candPage + totalPages - 1) % totalPages;
+    m_candSelection = m_candPage * m_settings.pageSize;
     _UpdateCandidateWindow();
 }
 
@@ -1025,6 +1056,8 @@ void CantoneseIME::_UpdateCandidateWindow() {
         return;
     }
     // Extract current page of candidates
+    m_candSelection = (std::clamp)(m_candSelection, 0, (std::max)(0, static_cast<int>(m_candidates.size()) - 1));
+    m_candPage = m_candSelection / m_settings.pageSize;
     int start = m_candPage * m_settings.pageSize;
     int end = min(start + m_settings.pageSize, (int)m_candidates.size());
     std::vector<Candidate> page(m_candidates.begin() + start, m_candidates.begin() + end);
@@ -1037,9 +1070,11 @@ void CantoneseIME::_UpdateCandidateWindow() {
         m_caretValid = true;
     }
     if (!m_caretValid) { m_candWnd->Hide(); return; }
+    m_candWnd->SetTheme(m_settings.theme);
+    m_candWnd->SetSelectionPending(m_deferredCandidate >= 0);
     m_candWnd->Show(m_buffer, page, m_lastCaretPt, m_candPage + 1,
         (std::max)(1, ((int)m_candidates.size() + m_settings.pageSize - 1) / m_settings.pageSize),
-        m_queryPending, m_cached, m_offline);
+        m_queryPending, m_cached, m_offline, m_candSelection - start);
 }
 
 void CantoneseIME::_CommitCandidate(int index) {
@@ -1049,6 +1084,7 @@ void CantoneseIME::_CommitCandidate(int index) {
     }
     if (m_queryPending) {
         m_deferredCandidate = index;
+        _UpdateCandidateWindow();
         _SendQuery();
         return;
     }
@@ -1126,6 +1162,7 @@ void CantoneseIME::_Reset() {
     m_queryPending = false;
     m_cached = m_offline = false;
     m_candPage = 0;
+    m_candSelection = 0;
     m_caretValid = false;
     if (m_candWnd) m_candWnd->Hide();
 }

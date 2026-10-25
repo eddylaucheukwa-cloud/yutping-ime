@@ -1,0 +1,21 @@
+{
+  "tool": "built-in image_gen",
+  "revisions": [
+    {
+      "key": "01-original-v2",
+      "refs": [
+        "C:/Desktop/claudeproject/yutping/assets/lucy-hair-options/01-original.png",
+        "C:/Desktop/claudeproject/yutping/build-check/reference-lucy-hair.jpg"
+      ],
+      "prompt": "Use case: precise-object-edit. Image 1 is the generated hair-only edit target. Image 2 is the original source and the authoritative guide to lighting and silhouette. Correct TWO specific defects only. (1) Remove the broad noisy rainbow halo surrounding Image 1: no grain, bright purple fog, white fringe, thick luminous outline or oversized aura. Restore the subtle narrow restrained edge lighting of Image 2, preserving the original pale pink crown, icy-blue body and purple underside; do not turn the whole hair into glowing white plastic. (2) RESTORE THE MISSING THIN UPWARD-FLYING HAIR LOCK at the LOWER LEFT of the original hair. In the 1920x1080 source Image 2 this is the fine curved sequence of pale-pink hair highlights approximately from (920,685) curving left through (855,650), (820,600), to the upward-left tapered tip near (769,540). These highlights are IMPORTANT HAIR, not face or neck debris: do not delete them. Reconstruct a delicate complete tapered wind-swept lock following that exact upward-left arc, joining naturally near the bottom of the long forelock. Keep this much thinner than the main lock, keep the airy space between them, do not replace it with a second thick hanging lock. Preserve the round short bob, bangs, main long forelock and original orientation. Clean cel shading, faithful restoration, no new face/head/body/clothing. Actual transparent alpha background. Whole hair, restored rising lock, and faint edge light fully inside canvas with ample padding on every side. Output ONE standalone hair illustration."
+    },
+    {
+      "key": "02-falling-v2",
+      "refs": [
+        "C:/Desktop/claudeproject/yutping/assets/lucy-hair-options/02-falling.png",
+        "C:/Users/user/AppData/Local/Temp/codex-clipboard-62acc315-02c2-497b-a794-897139526ba5.png"
+      ],
+      "prompt": "Use case: precise-object-edit. Image 1 is the generated upper-hair illustration to edit; Image 2 is the original screenshot with two hair drawings. Refer ONLY to its UPPER illustration, around x96-535 y592-1063. User correction: the long hanging hair on the OTHER SIDE has been lost. Keep the existing long near-side vertical mint-white forelock completely intact; restore the second, FAR-SIDE hanging lock on the opposite far-right edge beyond the short fringe, so there are TWO DISTINCT asymmetrical long hanging side locks, one on each side of the face opening, not just one long lock with a tiny doubled tip next to it. The restored far-side lock should emerge naturally from behind the short bob at the outer right temple, hang downward as a separate slim tapered pale icy-blue/lavender lock, with a clearly visible gap from the existing near-side long lock. Respect the asymmetry and perspective of the original, and match its pastel pink-white upper region, icy mint-blue lower region, lavender shadows and flat anime cel style. Keep all existing bob outline, fringe, main long lock, direction and composition as closely as possible; change only the missing far-side lock. No face, skin, eyes, neck, body or clothing. No extra character, no lower screenshot hairstyle, no collage, no text or UI. Remove grainy alpha-edge residue; no large glow or invented sparkles. Actual clean transparent background. Complete crown and BOTH long tips fully visible with generous padding, not cropped. One separate image."
+    }
+  ]
+}

@@ -33,6 +33,11 @@ UserSettings LoadUserSettings() {
     settings.chinesePunctuation = ReadNumber(key, L"ChinesePunctuation", 1) != 0;
     settings.learnChoices = ReadNumber(key, L"LearnChoices", 1) != 0;
     settings.f12Toggle = ReadNumber(key, L"F12Toggle", 0) != 0;
+    DWORD theme = ReadNumber(key, L"Theme", 0);
+    if (theme == 8) settings.theme = CandidateTheme::Lucy;
+    else if (theme == static_cast<DWORD>(CandidateTheme::LucyFlow) || theme == static_cast<DWORD>(CandidateTheme::DavidLucyEmbrace) ||
+        theme == static_cast<DWORD>(CandidateTheme::Earth) ||
+        (theme != 3 && theme != 4 && theme != 6 && theme <= static_cast<DWORD>(CandidateTheme::DavidLucy))) settings.theme = static_cast<CandidateTheme>(theme);
     RegCloseKey(key);
     return settings;
 }
@@ -44,7 +49,8 @@ bool SaveUserSettings(const UserSettings& settings) {
     bool okay = WriteNumber(key, L"PageSize", static_cast<DWORD>(settings.pageSize)) &&
         WriteNumber(key, L"ChinesePunctuation", settings.chinesePunctuation ? 1 : 0) &&
         WriteNumber(key, L"LearnChoices", settings.learnChoices ? 1 : 0) &&
-        WriteNumber(key, L"F12Toggle", settings.f12Toggle ? 1 : 0);
+        WriteNumber(key, L"F12Toggle", settings.f12Toggle ? 1 : 0) &&
+        WriteNumber(key, L"Theme", static_cast<DWORD>(settings.theme));
     RegCloseKey(key);
     return okay;
 }
