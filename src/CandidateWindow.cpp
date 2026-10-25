@@ -1208,6 +1208,17 @@ void CandidateWindow::Draw(HDC dc, RECT bounds, bool dark) {
     DeleteObject(border);
     SelectObject(dc, original);
     SetViewportOrgEx(dc, origin.x, origin.y, nullptr);
+    if (edgerunner) {
+        // The inner corner fill crosses the bezel's diagonals; redraw the outer edge on top,
+        // on exactly the pixels BevelRegion keeps.
+        const int w = layout.size.cx, h = layout.size.cy;
+        for (int k = 0; k <= 12; ++k) {
+            SetPixelV(dc, 12 - k, k, chrome.edge);
+            SetPixelV(dc, w - 13 + k, k, chrome.edge);
+            SetPixelV(dc, w - 1 - k, h - 13 + k, chrome.edge);
+            SetPixelV(dc, 12 - k, h - 1 - k, chrome.edge);
+        }
+    }
 }
 
 void CandidateWindow::Click(int x, int y) {

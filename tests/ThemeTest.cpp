@@ -157,6 +157,15 @@ public:
                         GetPixel(photograph, x, footerY), "icon-free footer leaves the background visible where paging icons used to be");
                 SelectObject(photograph, oldPhoto); DeleteDC(photograph);
             }
+            if (i >= 4) {
+                // The bevel's outer edge line stays unbroken on all four diagonals.
+                const COLORREF edge = (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow) ?
+                    RGB(105, 82, 128) : RGB(112, 70, 151);
+                for (int k = 0; k <= 12; ++k)
+                    Check(GetPixel(dc, 12 - k, k) == edge && GetPixel(dc, size.cx - 13 + k, k) == edge &&
+                        GetPixel(dc, size.cx - 1 - k, size.cy - 13 + k) == edge && GetPixel(dc, 12 - k, size.cy - 1 - k) == edge,
+                        "bevel outer edge line is continuous on every corner");
+            }
             const auto started = std::chrono::steady_clock::now();
             for (int frame = 0; frame < 20; ++frame) preview.Draw(dc, {0, 0, size.cx, size.cy}, i == 1);
             GdiFlush();
