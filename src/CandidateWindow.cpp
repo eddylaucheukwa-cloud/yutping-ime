@@ -39,14 +39,14 @@ constexpr Palette kLucy = {
     RGB(21, 15, 40), RGB(37, 31, 66)
 };
 constexpr Palette kDavidLucy = {
-    RGB(18, 17, 34), RGB(236, 247, 244), RGB(178, 193, 201),
-    RGB(67, 49, 90), RGB(149, 243, 184), RGB(43, 30, 62), RGB(149, 243, 184),
-    RGB(19, 32, 35), RGB(39, 61, 57)
+    RGB(11, 8, 19), RGB(237, 245, 238), RGB(211, 222, 227),
+    RGB(84, 49, 97), RGB(106, 255, 136), RGB(26, 36, 30), RGB(106, 255, 136),
+    RGB(6, 26, 18), RGB(24, 51, 38)
 };
-constexpr Palette kDavidLucyEmbrace = {
-    kDavidLucy.surface, kDavidLucy.ink, RGB(211, 222, 227),
-    kDavidLucy.line, kDavidLucy.selected, kDavidLucy.hover, kDavidLucy.accent,
-    kDavidLucy.selectedInk, kDavidLucy.selectedMuted
+constexpr Palette kCapri = {
+    RGB(13, 8, 11), RGB(240, 233, 235), RGB(203, 187, 192),
+    RGB(44, 87, 55), RGB(255, 0, 90), RGB(44, 18, 26), RGB(255, 0, 90),
+    RGB(23, 4, 10), RGB(36, 7, 15)
 };
 constexpr unsigned kLucyGradient[] = {0xf5e8ff, 0xc4c7f0, 0x7acbef, 0x3cace5, 0x48b9d5, 0x4ed89f, 0x80f1aa};
 constexpr float kLucyGradientStops[] = {0, .12f, .3f, .5f, .65f, .82f, 1};
@@ -87,17 +87,16 @@ bool IsDavidLucyTheme(CandidateTheme theme) {
 }
 
 bool IsCyberTheme(CandidateTheme theme) {
-    return IsLucyTheme(theme) ||
-        IsDavidLucyTheme(theme);
+    return IsLucyTheme(theme) || IsDavidLucyTheme(theme) || theme == CandidateTheme::Capri;
 }
 
 bool IsIconFreeTheme(CandidateTheme theme) {
-    return IsLucyTheme(theme) || IsDavidLucyTheme(theme);
+    return IsCyberTheme(theme);
 }
 
-// Lucy and David & Lucy share the edgerunner panel: long frame bars, fading highlight, header caret.
+// Cyber themes share the bevelled panel, frame bars and header caret.
 bool HasEdgerunnerPanel(CandidateTheme theme) {
-    return IsLucyTheme(theme) || IsDavidLucyTheme(theme);
+    return IsCyberTheme(theme);
 }
 
 bool HasMoonBackground(CandidateTheme theme) {
@@ -250,8 +249,9 @@ void PaintLucyArt(Gdiplus::Bitmap& canvas, Gdiplus::Bitmap& photo, SIZE size, CO
     art.UnlockBits(&source);
 }
 
-HBITMAP MakeBackground(HINSTANCE instance, SIZE size, COLORREF surface, CandidateTheme theme) {
-    const WORD resourceId = theme == CandidateTheme::Lucy ? 305 : theme == CandidateTheme::LucyFlow ? 306 : 303;
+HBITMAP MakeBackground(HINSTANCE instance, SIZE size, COLORREF surface, CandidateTheme theme, bool glow = false) {
+    const WORD resourceId = theme == CandidateTheme::Capri ? (glow ? 309 : 308) :
+        theme == CandidateTheme::Lucy ? 305 : theme == CandidateTheme::LucyFlow ? 306 : 303;
     IStream* stream = EmbeddedImageStream(instance, resourceId);
     if (!stream) return nullptr;
     Gdiplus::GdiplusStartupInput startup;
@@ -270,25 +270,37 @@ HBITMAP MakeBackground(HINSTANCE instance, SIZE size, COLORREF surface, Candidat
             graphics.Clear(Gdiplus::Color(255, GetRValue(surface), GetGValue(surface), GetBValue(surface)));
             graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
             Gdiplus::ColorMatrix matrix = {{{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
-                {0, 0, 0, 0.15f, 0}, {0, 0, 0, 0, 1}}};
+                {0, 0, 0, theme == CandidateTheme::DavidLucy ? .35f : theme == CandidateTheme::Capri ? (glow ? 1.f : .35f) : .15f, 0}, {0, 0, 0, 0, 1}}};
             Gdiplus::ImageAttributes attributes;
             attributes.SetColorMatrix(&matrix);
             attributes.SetColorKey(Gdiplus::Color(255, 0, 0, 0), Gdiplus::Color(255, 18, 18, 18));
             if (IsLucyTheme(theme)) {
                 graphics.Flush(Gdiplus::FlushIntentionSync);
                 PaintLucyArt(canvas, photo, size, surface, theme == CandidateTheme::LucyFlow);
+            } else if (theme == CandidateTheme::Capri) {
+                // Fixed crop and scale from the approved VectorCraft trace; short pages crop its bottom.
+                // The glow resource already includes its 35% core and 65% blurred light, with no glare.
+                graphics.DrawImage(&photo, Gdiplus::RectF(161.2f, -30, 57.6f, 312),
+                    0.f, 0.f, static_cast<float>(photo.GetWidth()), static_cast<float>(photo.GetHeight()),
+                    Gdiplus::UnitPixel, &attributes);
             } else {
-            const float scaleX = photo.GetWidth() / 1280.0f, scaleY = photo.GetHeight() / 1280.0f;
-            // Keep the original scene position; shorter panels only crop its bottom.
-            constexpr int diameter = 148, top = 54;
-            if (!IsLargeEarthTheme(theme))
-                graphics.DrawImage(&photo, Gdiplus::Rect((size.cx - diameter) / 2, top, diameter, diameter),
-                    600 * scaleX, 540 * scaleY, 250 * scaleX, 250 * scaleY, Gdiplus::UnitPixel, &attributes);
-            const int horizon = (std::max)(40L, size.cy / 5);
-            graphics.DrawImage(&photo, Gdiplus::Rect(0, size.cy - horizon, size.cx, horizon),
-                0.0f, 925 * scaleY, static_cast<float>(photo.GetWidth()), 355 * scaleY, Gdiplus::UnitPixel, &attributes);
-            if (IsLargeEarthTheme(theme))
-                DrawLargeEarthBackground(graphics, instance, size, surface, theme == CandidateTheme::DavidLucyEmbrace);
+                if (theme == CandidateTheme::DavidLucy) {
+                    // Enlarge around a fixed six-row scene anchor so page changes never move the Earth.
+                    constexpr float zoom = 1.05f, anchorY = 256 * .42f;
+                    Gdiplus::Matrix transform(zoom, 0, 0, zoom, (1 - zoom) * size.cx * .5f, (1 - zoom) * anchorY);
+                    graphics.SetTransform(&transform);
+                }
+                const float scaleX = photo.GetWidth() / 1280.0f, scaleY = photo.GetHeight() / 1280.0f;
+                // Keep the original scene position; shorter panels only crop its bottom.
+                constexpr int diameter = 148, top = 54;
+                if (!IsLargeEarthTheme(theme))
+                    graphics.DrawImage(&photo, Gdiplus::Rect((size.cx - diameter) / 2, top, diameter, diameter),
+                        600 * scaleX, 540 * scaleY, 250 * scaleX, 250 * scaleY, Gdiplus::UnitPixel, &attributes);
+                const int horizon = (std::max)(40L, size.cy / 5);
+                graphics.DrawImage(&photo, Gdiplus::Rect(0, size.cy - horizon, size.cx, horizon),
+                    0.0f, 925 * scaleY, static_cast<float>(photo.GetWidth()), 355 * scaleY, Gdiplus::UnitPixel, &attributes);
+                if (IsLargeEarthTheme(theme))
+                    DrawLargeEarthBackground(graphics, instance, size, surface, theme == CandidateTheme::DavidLucyEmbrace);
             }
             graphics.Flush(Gdiplus::FlushIntentionSync);
             canvas.GetHBITMAP(Gdiplus::Color(255, 0, 0, 0), &result);
@@ -307,8 +319,9 @@ const Palette& ThemePalette(CandidateTheme theme, bool dark) {
     case CandidateTheme::Lucy:
     case CandidateTheme::LucyFlow: return kLucy;
     case CandidateTheme::DavidLucy: return kDavidLucy;
+    case CandidateTheme::Capri: return kCapri;
     case CandidateTheme::DavidLucyEmbrace:
-    case CandidateTheme::Earth: return kDavidLucyEmbrace;
+    case CandidateTheme::Earth: return kDavidLucy;
     default: return dark ? kDark : kLight;
     }
 }
@@ -320,7 +333,8 @@ CyberChrome ThemeChrome(CandidateTheme theme) {
     case CandidateTheme::LucyFlow: return {RGB(31, 28, 48), RGB(12, 10, 21), RGB(105, 82, 128), RGB(240, 169, 209)};
     case CandidateTheme::DavidLucy:
     case CandidateTheme::DavidLucyEmbrace:
-    case CandidateTheme::Earth: return {RGB(34, 24, 52), RGB(8, 9, 19), RGB(112, 70, 151), RGB(197, 112, 244)};
+    case CandidateTheme::Earth: return {RGB(25, 14, 34), RGB(11, 8, 19), RGB(205, 94, 242), RGB(205, 94, 242)};
+    case CandidateTheme::Capri: return {RGB(15, 28, 19), RGB(13, 8, 11), RGB(255, 0, 90), RGB(106, 255, 136)};
     default: return {RGB(29, 19, 48), RGB(8, 7, 17), RGB(112, 69, 143), RGB(255, 105, 194)};
     }
 }
@@ -559,8 +573,8 @@ void ThemeFrame(HDC dc, CandidateTheme theme, SIZE size) {
             Fill(dc, {w - 3, y, w - 1, y + 2}, colors.line);
         }
         const bool lucy = IsLucyTheme(theme);
-        Fill(dc, {18, 0, 82, 2}, lucy ? RGB(186, 95, 242) : chrome.secondary);
-        Fill(dc, {w - 82, h - 2, w - 18, h}, lucy ? kLucyPicked : colors.accent);
+        Fill(dc, {18, 0, 82, 2}, lucy ? RGB(186, 95, 242) : theme == CandidateTheme::Capri ? colors.accent : chrome.secondary);
+        Fill(dc, {w - 82, h - 2, w - 18, h}, lucy ? kLucyPicked : theme == CandidateTheme::Capri ? chrome.secondary : colors.accent);
     } else if (IsCyberTheme(theme)) {
         const Palette& colors = ThemePalette(theme, false);
         const CyberChrome chrome = ThemeChrome(theme);
@@ -598,22 +612,24 @@ CandidateWindow::Layout CandidateWindow::GetLayout() const {
 
 CandidateWindow::CandidateWindow() {}
 CandidateWindow::~CandidateWindow() {
+    StopGlow();
     if (m_hwnd) DestroyWindow(m_hwnd);
     for (HFONT font : m_fonts) if (font) DeleteObject(font);
     if (m_letterResource) RemoveFontMemResourceEx(m_letterResource);
     if (m_background) DeleteObject(m_background);
+    if (m_glowBackground) DeleteObject(m_glowBackground);
     if (m_mark) DeleteObject(m_mark);
     if (m_gradientTitle) DeleteObject(m_gradientTitle);
     if (m_plate) DeleteObject(m_plate);
 }
 
 // The highlighted row: a chamfered plate. Lucy's uses her hair gradient and fades left to right;
-// David & Lucy's is solid and opaque with a sharp purple afterimage offset down-left.
+// David & Lucy and Capri use solid plates with a sharp contrasting afterimage down-left.
 // Built once per theme, then one AlphaBlend per paint.
 void CandidateWindow::DrawSelectionPlate(HDC dc, int left, int top, int width, int height, COLORREF solid) {
     if (width <= 0 || height <= 0) return;
-    const bool ghost = IsDavidLucyTheme(m_theme);
-    constexpr int offset = 3, cut = 6;  // equal right and bottom offsets
+    const bool ghost = IsDavidLucyTheme(m_theme) || m_theme == CandidateTheme::Capri;
+    constexpr int offset = 3, cut = 6;  // equal left and bottom offsets
     const int pad = ghost ? offset : 0;
     const int fullWidth = width + pad, fullHeight = height + pad;
     if (!m_plate || m_plateTheme != m_theme || m_plateSize.cx != width || m_plateSize.cy != height) {
@@ -846,12 +862,14 @@ void CandidateWindow::DrawBackground(HDC dc, RECT bounds, COLORREF surface) {
     if (m_backgroundTheme != m_theme || m_backgroundSize.cx != size.cx || m_backgroundSize.cy != size.cy) {
         if (m_background) DeleteObject(m_background);
         m_background = MakeBackground(s_hInst, size, surface, m_theme);
+        if (m_glowBackground) DeleteObject(m_glowBackground);
+        m_glowBackground = m_theme == CandidateTheme::Capri ? MakeBackground(s_hInst, size, surface, m_theme, true) : nullptr;
         m_backgroundSize = size;
         m_backgroundTheme = m_theme;
     }
     if (!m_background) return;
     HDC memory = CreateCompatibleDC(dc);
-    HGDIOBJ previous = SelectObject(memory, m_background);
+    HGDIOBJ previous = SelectObject(memory, m_glowActive && m_glowBackground ? m_glowBackground : m_background);
     BitBlt(dc, bounds.left, bounds.top, size.cx, size.cy, memory, 0, 0, SRCCOPY);
     SelectObject(memory, previous);
     DeleteDC(memory);
@@ -918,7 +936,32 @@ void CandidateWindow::Show(const std::wstring& composition,
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void CandidateWindow::SetTheme(CandidateTheme theme) {
+    if (m_theme != theme) StopGlow();
+    m_theme = theme;
+}
+
+void CandidateWindow::NotifyTyping() {
+    if (m_theme != CandidateTheme::Capri || !IsVisible() || m_composition.empty()) return;
+    m_lastTyping = GetTickCount64();
+    // Reset one idle timer; repaints just switch between two cached bitmaps.
+    if (!SetTimer(m_hwnd, GLOW_TIMER, GLOW_IDLE_MS, nullptr)) { StopGlow(); return; }
+    if (!m_glowActive) {
+        m_glowActive = true;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void CandidateWindow::StopGlow() {
+    if (m_hwnd) KillTimer(m_hwnd, GLOW_TIMER);
+    const bool wasActive = m_glowActive;
+    m_glowActive = false;
+    m_lastTyping = 0;
+    if (wasActive && m_hwnd) InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
 void CandidateWindow::Hide() {
+    StopGlow();
     if (m_hwnd) ShowWindow(m_hwnd, SW_HIDE);
     m_candidates.clear();
     m_composition.clear();
@@ -1010,14 +1053,13 @@ void CandidateWindow::Draw(HDC dc, RECT bounds, bool dark) {
     SetViewportOrgEx(dc, origin.x + layout.content.left, origin.y + layout.content.top, nullptr);
     bounds = {0, 0, WIN_W, layout.content.bottom - layout.content.top};
     Fill(dc, bounds, colors.surface);
-    if (HasMoonBackground(m_theme) || IsLucyTheme(m_theme)) DrawBackground(dc, bounds, colors.surface);
+    if (IsCyberTheme(m_theme)) DrawBackground(dc, bounds, colors.surface);
     else if (m_background) {
         DeleteObject(m_background); m_background = nullptr; m_backgroundSize = {};
+        if (m_glowBackground) { DeleteObject(m_glowBackground); m_glowBackground = nullptr; }
     }
     HFONT original = static_cast<HFONT>(SelectObject(dc, titleFont));
     if (cyber) {
-        // Lucy's header stays clear so her art and scrim continue behind the letters.
-        if (!HasMoonBackground(m_theme) && !IsLucyTheme(m_theme)) Fill(dc, {1, 1, WIN_W - 1, HEADER_H - 1}, chrome.panel);
         // CRT scan lines only cross the empty gutters, never the text.
         for (int y = HEADER_H + 3; y < bounds.bottom - FOOTER_H; y += 4)
             Fill(dc, {1, y, 5, y + 1}, colors.line);
@@ -1050,6 +1092,13 @@ void CandidateWindow::Draw(HDC dc, RECT bounds, bool dark) {
         SetTextColor(dc, colors.accent);
         DrawTextW(dc, L">", -1, &prompt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         header.left = 30;
+    }
+    if (IsDavidLucyTheme(m_theme) || m_theme == CandidateTheme::Capri) {
+        RECT shadow = header;
+        // Capri keeps a thin right-hand fringe instead of a diagonal double image.
+        OffsetRect(&shadow, 1, m_theme == CandidateTheme::Capri ? 0 : 1);
+        SetTextColor(dc, chrome.secondary);
+        DrawLetters(dc, m_composition, shadow);
     }
     SetTextColor(dc, cyber ? colors.accent : colors.ink);
     const int lettersWidth = DrawLetters(dc, m_composition, header);
@@ -1129,6 +1178,7 @@ void CandidateWindow::Draw(HDC dc, RECT bounds, bool dark) {
             SelectObject(dc, smallFont);
             SetTextColor(dc, m_loading ? colors.muted :
                 (selected ? (IsLucyTheme(m_theme) ? kLucyPicked : colors.accent) : colors.muted));
+            if (m_theme == CandidateTheme::Capri && !m_loading) SetTextColor(dc, chrome.secondary);
             std::wstring digit = (m_theme == CandidateTheme::Terminal || cyber ? L"0" : L"") +
                 std::to_wstring(i + 1) + (m_theme == CandidateTheme::System ? L"." : L"");
             DrawTextW(dc, digit.c_str(), -1, &number, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1176,7 +1226,7 @@ void CandidateWindow::Draw(HDC dc, RECT bounds, bool dark) {
     else if (cyber) swprintf_s(pageText, L"%02d / %02d", m_page, m_totalPages);
     else swprintf_s(pageText, L"%d / %d", m_page, m_totalPages);
     RECT page = { 48, footerTop + 1, WIN_W - 48, bounds.bottom - 1 };
-    SetTextColor(dc, colors.muted);
+    SetTextColor(dc, m_theme == CandidateTheme::Capri ? chrome.secondary : IsDavidLucyTheme(m_theme) ? colors.accent : colors.muted);
     DrawTextW(dc, pageText, -1, &page, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     if (!iconFree && IsDavidLucyTheme(m_theme))
         EarthMoonRoute(dc, WIN_W, footerTop, FOOTER_H, m_page, m_totalPages, m_loading);
@@ -1246,6 +1296,13 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_PAINT:
         if (self) self->Paint(hwnd);
         return 0;
+    case WM_TIMER:
+        if (self && wp == GLOW_TIMER) {
+            // A timer message queued before a newer key must not extinguish the new glow.
+            if (self->m_glowActive && GetTickCount64() - self->m_lastTyping >= GLOW_IDLE_MS) self->StopGlow();
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_ERASEBKGND:
         return 1;
     case WM_SETCURSOR:

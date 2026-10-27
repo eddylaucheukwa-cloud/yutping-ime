@@ -25,7 +25,9 @@ public:
     void Hide();
 
     bool IsVisible() const;
-    void SetTheme(CandidateTheme theme) { m_theme = theme; }
+    void SetTheme(CandidateTheme theme);
+    // Visual feedback only; the owner calls this after a spelling key is accepted.
+    void NotifyTyping();
     void SetSelectionPending(bool pending) { m_selectionPending = pending; }
     SIZE PreferredSize() const { return GetLayout().size; }
 
@@ -37,6 +39,7 @@ private:
     friend class CandidateThemeTest;
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     void Paint(HWND hwnd);
+    void StopGlow();
     void Draw(HDC dc, RECT bounds, bool dark);
     void DrawBackground(HDC dc, RECT bounds, COLORREF surface);
     void DrawThemeMark(HDC dc, RECT area);
@@ -74,6 +77,11 @@ private:
     bool m_letterResourceAttempted = false;
     int m_fontRowHeight = 0;
     HBITMAP m_background = nullptr;
+    HBITMAP m_glowBackground = nullptr;
+    bool m_glowActive = false;
+    ULONGLONG m_lastTyping = 0;
+    static constexpr UINT_PTR GLOW_TIMER = 1;
+    static constexpr UINT GLOW_IDLE_MS = 500;
     SIZE m_backgroundSize = {};
     CandidateTheme m_backgroundTheme = CandidateTheme::System;
     HBITMAP m_mark = nullptr;

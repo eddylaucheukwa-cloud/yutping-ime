@@ -34,9 +34,9 @@ public:
         RECT canvas = {0, 0, width, height}; FillRect(dc, &canvas, background); DeleteObject(background);
         HFONT label = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        const wchar_t* labels[] = {L"SYSTEM / LIGHT", L"SYSTEM / DARK", L"TERMINAL", L"GAME BOY", L"LUCY · AFTERGLOW", L"DAVID & LUCY · EARTHRISE", L"LUCY · FLOW", L"DAVID & LUCY · EMBRACE", L"DAVID & LUCY · BLUE MARBLE"};
+        const wchar_t* labels[] = {L"SYSTEM / LIGHT", L"SYSTEM / DARK", L"TERMINAL", L"GAME BOY", L"LUCY · AFTERGLOW", L"DAVID & LUCY · EARTHRISE", L"LUCY · FLOW", L"DAVID & LUCY · EMBRACE", L"DAVID & LUCY · BLUE MARBLE", L"CAPRI · REDLINE"};
         const CandidateTheme themes[] = {CandidateTheme::System, CandidateTheme::System, CandidateTheme::Terminal, CandidateTheme::GameBoy,
-            CandidateTheme::Lucy, CandidateTheme::DavidLucy, CandidateTheme::LucyFlow, CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth};
+            CandidateTheme::Lucy, CandidateTheme::DavidLucy, CandidateTheme::LucyFlow, CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth, CandidateTheme::Capri};
         CandidateWindow preview;
         preview.m_composition = L"neiho";
         preview.m_candidates = {{L"你好", L"nei hou", 5}, {L"你可", L"nei ho", 5},
@@ -146,7 +146,7 @@ public:
                 Check(cachedMark && cachedMark == preview.m_mark, "detailed theme icons are reused between repaints");
             else if (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow ||
                 preview.m_theme == CandidateTheme::DavidLucy ||
-                preview.m_theme == CandidateTheme::DavidLucyEmbrace || preview.m_theme == CandidateTheme::Earth) {
+                preview.m_theme == CandidateTheme::DavidLucyEmbrace || preview.m_theme == CandidateTheme::Earth || preview.m_theme == CandidateTheme::Capri) {
                 Check(!preview.m_mark, "icon-free themes discard any previous theme's cached icon");
                 const auto content = preview.GetLayout();
                 const int footerY = content.content.bottom - content.content.top - content.footer / 2;
@@ -160,11 +160,23 @@ public:
             if (i >= 4) {
                 // The bevel's outer edge line stays unbroken on all four diagonals.
                 const COLORREF edge = (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow) ?
-                    RGB(105, 82, 128) : RGB(112, 70, 151);
+                    RGB(105, 82, 128) : preview.m_theme == CandidateTheme::Capri ? RGB(255, 0, 90) : RGB(205, 94, 242);
                 for (int k = 0; k <= 12; ++k)
                     Check(GetPixel(dc, 12 - k, k) == edge && GetPixel(dc, size.cx - 13 + k, k) == edge &&
                         GetPixel(dc, size.cx - 1 - k, size.cy - 13 + k) == edge && GetPixel(dc, 12 - k, size.cy - 1 - k) == edge,
                         "bevel outer edge line is continuous on every corner");
+            }
+            if (preview.m_theme == CandidateTheme::Capri || preview.m_theme == CandidateTheme::DavidLucy ||
+                preview.m_theme == CandidateTheme::DavidLucyEmbrace || preview.m_theme == CandidateTheme::Earth) {
+                const bool capri = preview.m_theme == CandidateTheme::Capri;
+                const COLORREF face = capri ? RGB(255, 0, 90) : RGB(106, 255, 136);
+                const COLORREF shadow = capri ? RGB(106, 255, 136) : RGB(205, 94, 242);
+                int faces = 0, shadows = 0;
+                for (int y = 8; y < 31; ++y) for (int x = 12; x < 100; ++x) {
+                    const COLORREF p = GetPixel(dc, x, y);
+                    faces += p == face; shadows += p == shadow;
+                }
+                Check(faces > 5 && shadows > 5, "composition has the approved solid face and crisp contrasting shadow");
             }
             const auto started = std::chrono::steady_clock::now();
             for (int frame = 0; frame < 20; ++frame) preview.Draw(dc, {0, 0, size.cx, size.cy}, i == 1);
@@ -250,7 +262,7 @@ public:
                 int photoPixels = 0;
                 for (int y = 2; y < layout.header - 2; ++y)
                     for (int x = 8; x < layout.content.right - layout.content.left - 8; ++x)
-                        photoPixels += GetPixel(sample, x, y) != RGB(18, 17, 34);
+                        photoPixels += GetPixel(sample, x, y) != RGB(11, 8, 19);
                 Check(photoPixels > 500, "Earth photograph extends through the header instead of stopping below it");
                 const COLORREF expected = GetPixel(sample, 188, 8);
                 const COLORREF actual = GetPixel(dc, layout.content.left + 188, layout.content.top + 8);
@@ -400,6 +412,19 @@ public:
             Check(SaveUserSettings(settings) && LoadUserSettings().theme == settings.theme, "theme settings round trip");
             RegOverridePredefKey(HKEY_CURRENT_USER, nullptr);
         }
+        if (output) {
+            // Export the active Capri appearance alongside its idle frame, from the native renderer.
+            SetViewportOrgEx(dc, 608, 724, nullptr);
+            HGDIOBJ oldLabel = SelectObject(dc, label);
+            SetTextColor(dc, RGB(57, 55, 49)); SetBkMode(dc, TRANSPARENT);
+            const wchar_t caption[] = L"CAPRI · REDLINE / TYPING GLOW";
+            TextOutW(dc, 0, -26, caption, static_cast<int>(std::size(caption)) - 1);
+            SelectObject(dc, oldLabel);
+            preview.m_glowActive = true;
+            const SIZE size = preview.PreferredSize();
+            preview.Draw(dc, {0, 0, size.cx, size.cy}, false);
+            preview.m_glowActive = false;
+        }
         for (CandidateTheme theme : {CandidateTheme::Lucy, CandidateTheme::LucyFlow}) {
             CandidateWindow hair;
             hair.SetTheme(theme);
@@ -442,7 +467,7 @@ public:
             constexpr int w = 256, h = 264;
             Check(!CandidateWindow::BevelRegion(CandidateTheme::Terminal, {w, h}), "other themes keep a rectangular window");
             for (CandidateTheme theme : {CandidateTheme::Lucy, CandidateTheme::LucyFlow, CandidateTheme::DavidLucy,
-                CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth}) {
+                CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth, CandidateTheme::Capri}) {
                 HRGN region = CandidateWindow::BevelRegion(theme, {w, h});
                 Check(region && PtInRegion(region, w / 2, h / 2) && !PtInRegion(region, 0, 0) &&
                     !PtInRegion(region, w - 1, 0) && !PtInRegion(region, 0, h - 1) && !PtInRegion(region, w - 1, h - 1),
@@ -478,11 +503,58 @@ public:
                 cropped.Draw(dc, {0, 0, size.cx, size.cy}, false);
             }
         }
+        {
+            CandidateWindow glow;
+            glow.SetTheme(CandidateTheme::Capri);
+            glow.m_composition = L"neiho";
+            glow.m_candidates = {{L"你好", L"nei hou", 5}};
+            const SIZE size = glow.PreferredSize();
+            Check(CandidateWindow::RegisterClass(GetModuleHandleW(nullptr)), "glow window class");
+            // Offscreen and non-activating: the test never takes keyboard focus from the user.
+            glow.m_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                CandidateWindow::s_className.c_str(), L"", WS_POPUP | WS_VISIBLE,
+                -32000, -32000, size.cx, size.cy, nullptr, nullptr, GetModuleHandleW(nullptr), &glow);
+            Check(glow.m_hwnd != nullptr, "glow test window");
+            SetViewportOrgEx(dc, 0, 0, nullptr);
+            HDC scratch = CreateCompatibleDC(dc);
+            HBITMAP image = CreateCompatibleBitmap(dc, 256, 400);
+            HGDIOBJ oldImage = SelectObject(scratch, image);
+            glow.Draw(scratch, {0, 0, size.cx, size.cy}, false);
+            HBITMAP idle = glow.m_background, lit = glow.m_glowBackground;
+            Check(idle && lit && idle != lit && !glow.m_glowActive, "idle and glow backgrounds are cached before typing");
+            const COLORREF idlePixel = GetPixel(scratch, 199, 90);
+            glow.NotifyTyping();
+            Check(glow.m_glowActive, "typing activates Capri glow");
+            glow.Draw(scratch, {0, 0, size.cx, size.cy}, false);
+            Check(glow.m_background == idle && glow.m_glowBackground == lit, "typing reuses both background bitmaps");
+            Check(GetPixel(scratch, 199, 90) != idlePixel, "glow changes the actual rendered background");
+            const ULONGLONG lastTyping = glow.m_lastTyping;
+            SendMessageW(glow.m_hwnd, WM_TIMER, CandidateWindow::GLOW_TIMER, 0);
+            Check(glow.m_glowActive && glow.m_lastTyping == lastTyping, "a queued early timer does not extinguish a new key");
+            const ULONGLONG deadline = GetTickCount64() + 1500;
+            MSG msg;
+            while (glow.m_glowActive && GetTickCount64() < deadline) {
+                while (PeekMessageW(&msg, glow.m_hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+                Sleep(5);
+            }
+            Check(!glow.m_glowActive, "real idle timer turns glow off after typing stops");
+            glow.NotifyTyping();
+            glow.SetTheme(CandidateTheme::DavidLucy);
+            Check(!glow.m_glowActive, "switching themes clears glow");
+            glow.NotifyTyping();
+            Check(!glow.m_glowActive, "other themes do not activate Capri glow");
+            glow.SetTheme(CandidateTheme::Capri);
+            glow.NotifyTyping();
+            glow.Hide();
+            glow.NotifyTyping();
+            Check(!glow.m_glowActive && !glow.IsVisible(), "hide and focus loss cancel glow; hidden windows cannot retrigger it");
+            SelectObject(scratch, oldImage); DeleteObject(image); DeleteDC(scratch);
+        }
         int selectedRow = -1, page = 0;
         preview.SetSelectCallback([&](int row) { selectedRow = row; });
         preview.SetPageCallback([&](int direction) { page += direction; });
         for (CandidateTheme theme : {CandidateTheme::System, CandidateTheme::Terminal, CandidateTheme::GameBoy,
-                CandidateTheme::Lucy, CandidateTheme::LucyFlow, CandidateTheme::DavidLucy, CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth}) {
+                CandidateTheme::Lucy, CandidateTheme::LucyFlow, CandidateTheme::DavidLucy, CandidateTheme::DavidLucyEmbrace, CandidateTheme::Earth, CandidateTheme::Capri}) {
             preview.SetTheme(theme);
             for (int count : {0, 4, 6, 9}) {
                 preview.m_candidates.resize(count, {L"字", L"", 1});

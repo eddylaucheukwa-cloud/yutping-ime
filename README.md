@@ -62,6 +62,10 @@
 <td align="center"><img src="docs/themes/david-lucy-embrace.png" width="240" alt="David &amp; Lucy · Embrace"><br><b>David &amp; Lucy · Embrace</b></td>
 <td align="center"><img src="docs/themes/david-lucy-blue-marble.png" width="240" alt="David &amp; Lucy · Blue Marble"><br><b>David &amp; Lucy · Blue Marble</b></td>
 </tr>
+<tr>
+<td align="center"><img src="docs/themes/capri-redline.png" width="240" alt="Capri · Redline"><br><b>Capri · Redline</b></td>
+<td align="center"><img src="docs/themes/capri-redline-glow.png" width="240" alt="Capri · Redline typing glow"><br><b>Capri · Redline — Typing Glow</b></td>
+</tr>
 </table>
 
 以上為實際選字窗的截圖（`System` 會跟隨 Windows 的深色／淺色模式，圖中為深色）。
@@ -73,15 +77,16 @@
 | Game Boy | 縮小的 DMG 螢幕邊框、四色 LCD、電源燈及方框選字標記；右上角保留「粵拼」 |
 | Lucy · Afterglow | Lucy 的髮色漸變（淡紫 → 冰藍 → 薄荷綠）用於輸入欄英文及選字高亮；高亮由左至右從 100% 淡至 55% 不透明，讓背景透出；髮絲原圖以 85% 強度、濾色（screen）方式顯示於右側，左側以深色漸層保護文字 |
 | Lucy · Flow | 同上設計，背景改用飄逸髮絲圖，顯示強度 70% |
-| David & Lucy · Earthrise | Apollo 8 Earthrise 的地球與月面背景；薄荷綠實色高亮，左下方帶紫色殘影 |
+| David & Lucy · Earthrise | Earthrise 背景放大至 105%、不透明度 35%；輸入英文為 `#6AFF88` 綠色，最外框、英文細陰影與高亮左下殘影為 `#CD5EF2` 紫色 |
 | David & Lucy · Embrace | 擁抱人物 22%、大型地球照片 32%，背景延伸至頂欄及頁數欄；高亮與 Earthrise 相同 |
 | David & Lucy · Blue Marble | 與 Embrace 相同的大型地球，移除背景人物 |
+| Capri · Redline | `#FF005A` 紅色輸入英文、實色高亮及最外框，配 `#6AFF88` 細綠字影、編號、頁碼與高亮殘影；背景為 VectorCraft 重構的紅色閃電，35% 不透明度，只有輸入時啟動 Glow |
 
-兩款 Lucy 及三款 David & Lucy 共用同一套 Edgerunner 外框：四角削邊（視窗本身亦按削角裁切，角位透明）、內框四角同樣削邊、兩側刻度線、上下各一條長色帶；頂欄只顯示輸入的英文及游標，不顯示主題圖示；候選字編號沿用原有點陣（無反鋸齒）Consolas 字體及方框，選中時編號轉為綠色；頁尾只顯示頁碼，左右兩側仍可點擊翻頁，鍵盤 `-`／`=` 亦可。
+兩款 Lucy、三款 David & Lucy 及 Capri 共用同一套 Edgerunner 外框：四角削邊（視窗本身亦按削角裁切，角位透明）、內框四角同樣削邊、兩側刻度線、上下各一條長色帶；頂欄只顯示輸入的英文及游標，不顯示主題圖示；候選字編號沿用原有點陣（無反鋸齒）Consolas 字體及方框，選中時編號轉為綠色（Capri 編號始終為綠色）；頁尾只顯示頁碼，左右兩側仍可點擊翻頁，鍵盤 `-`／`=` 亦可。
 
-主題以選字和減少遮擋為優先，不含動畫或閃爍效果。六個候選字時，各主題視窗均不超過 256 × 278 像素。4／6／9 個候選字使用相同字體大小，視窗按列數調整高度；背景保持固定大小與上方位置，候選字減少時從底部裁切。背景、選字高亮及輸入欄漸變只在主題或尺寸改變時產生一次，其後每次重繪直接使用快取，打字速度不受影響。候選區小字對比、版面尺寸、視窗削角及滑鼠選字／翻頁均有自動檢查。
+主題以選字和減少遮擋為優先。Capri 只在輸入字母、分隔符或刪字時亮起柔和 Glow，停字 500 毫秒、關閉選字窗或失去輸入焦點後熄滅；翻頁、移動選字及候選更新不觸發光效，沒有 Glare、掃光或閃爍。六個候選字時，各主題視窗均不超過 256 × 278 像素。4／6／9 個候選字使用相同字體大小，視窗按列數調整高度；背景保持固定大小與上方位置，候選字減少時從底部裁切。背景、選字高亮及輸入欄漸變只在主題或尺寸改變時產生一次；Capri 預先快取靜止與 Glow 兩張背景，按鍵只切換快取及重設熄光計時器，不會逐鍵解碼或模糊圖片。候選區小字對比、版面尺寸、視窗削角及滑鼠選字／翻頁均有自動檢查。
 
-兩款 Lucy 及三款 David & Lucy 的**頂部輸入英文**使用內嵌的自訂字體，保留核准的緊湊字距。字體只載入目前程式，不需安裝到 Windows，也不會改變其他應用程式輸出的字體。
+兩款 Lucy、三款 David & Lucy 及 Capri 的**頂部輸入英文**使用內嵌的自訂字體，保留核准的緊湊字距。字體只載入目前程式，不需安裝到 Windows，也不會改變其他應用程式輸出的字體。
 
 David 主題、Neon Arcade 及 Paper & Ink 已移除；舊設定若選用這些主題，更新後會回到「System (match Windows)」，其他主題設定保留。
 
@@ -89,6 +94,9 @@ David 主題、Neon Arcade 及 Paper & Ink 已移除；舊設定若選用這些�
 
 ### 本次更新
 
+- 新增 Capri · Redline：紅綠配色、重構閃電背景及僅打字時啟動的 Glow（無 Glare）；綠色字影收窄成貼近紅字右側的細邊。
+- David & Lucy 及 Capri 的頁碼維持 `#6AFF88` 綠色。
+- David & Lucy 三款主題：更新綠紫配色、英文細陰影及紫色最外框；Earthrise 背景改為 105%／35%，小字配色同步調亮以保持清晰。
 - 主題名稱改為英文：System (match Windows)、Terminal、Game Boy、Lucy · Afterglow、Lucy · Flow、David & Lucy · Earthrise、David & Lucy · Embrace、David & Lucy · Blue Marble。
 - 移除 David 主題（原設定會回到 System）。
 - Lucy 與 David & Lucy 改用新的 Edgerunner 外框：視窗四角削邊並透明裁切、內框削角、上下長色帶，移除頂欄及頁尾圖示。

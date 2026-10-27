@@ -76,7 +76,8 @@ LRESULT CALLBACK SettingsProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             {L"Lucy · Afterglow", CandidateTheme::Lucy}, {L"Lucy · Flow", CandidateTheme::LucyFlow},
             {L"David & Lucy · Earthrise", CandidateTheme::DavidLucy},
             {L"David & Lucy · Embrace", CandidateTheme::DavidLucyEmbrace},
-            {L"David & Lucy · Blue Marble", CandidateTheme::Earth}
+            {L"David & Lucy · Blue Marble", CandidateTheme::Earth},
+            {L"Capri · Redline", CandidateTheme::Capri}
         };
         for (const auto& option : themes) {
             const LRESULT index = SendMessageW(theme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(option.label));

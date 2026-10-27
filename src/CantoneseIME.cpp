@@ -586,6 +586,7 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
             return;
         }
         _RequestQuery();
+        m_candWnd->NotifyTyping();
         return;
     }
 
@@ -596,6 +597,7 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
             _CaptureCaretPos(ec, pic);
         });
         _RequestQuery();
+        m_candWnd->NotifyTyping();
         return;
     }
 
@@ -630,6 +632,7 @@ void CantoneseIME::_HandleKeyDown(ITfContext* pic, WPARAM wp, bool shift, BOOL* 
                 _CaptureCaretPos(ec, pic);
             });
             _RequestQuery();
+            m_candWnd->NotifyTyping();
         }
         break;
 

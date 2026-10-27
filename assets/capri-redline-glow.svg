@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="650" viewBox="0 0 120 650">
+  <defs>
+    <filter id="filter-1" filterUnits="userSpaceOnUse" x="-202" y="-217" width="320" height="1384" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="5"/></filter>
+  </defs>
+  <title>poster-lightning-focus.svg</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <g filter="url(#filter-1)">
+      <path d="M66 -200 L83 -200 L81 140 L80 197 L73 203 L74 219 L81 229 L83 266 L76 273 L29 350 L34 361 L42 366 L101 369 L88 374 L92 428 L74 431 L71 427 L68 839 L72 852 L71 939 L57 943 L58 852 L59 841 L63 449 L65 418 L77 423 L79 375 L61 374 L58 379 L48 374 L27 377 L20 362 L13 351 L10 348 L20 345 L22 336 L70 274 L74 265 L73 233 L65 228 L63 220 L63 199 L67 173 L75 148 L78 -64 L76 -100 L69 -111 L66 -150 Z M57 922 L75 922 L71 941 L63 953 L62 970 L77 987 L59 1019 L-121 1150 L-185 1150 L-185 1028 L-4 953 L57 933 Z" fill="#ff005a" opacity="0.65"/>
+    </g>
+    <path d="M66 -200 L83 -200 L81 140 L80 197 L73 203 L74 219 L81 229 L83 266 L76 273 L29 350 L34 361 L42 366 L101 369 L88 374 L92 428 L74 431 L71 427 L68 839 L72 852 L71 939 L57 943 L58 852 L59 841 L63 449 L65 418 L77 423 L79 375 L61 374 L58 379 L48 374 L27 377 L20 362 L13 351 L10 348 L20 345 L22 336 L70 274 L74 265 L73 233 L65 228 L63 220 L63 199 L67 173 L75 148 L78 -64 L76 -100 L69 -111 L66 -150 Z M57 922 L75 922 L71 941 L63 953 L62 970 L77 987 L59 1019 L-121 1150 L-185 1150 L-185 1028 L-4 953 L57 933 Z" fill="#ff005a" opacity="0.35"/>
+  </g>
+</svg>

@@ -39,3 +39,11 @@ The David & Lucy Embrace theme applies a cool tint and 32% display opacity at re
 `lucy-hair-options/` holds separate image-generation restorations, with their prompts in `prompts.json` and revision prompt files. Only the selected third option, `03-flowing.png`, is embedded for the Lucy · Flow background, screen-blended at 70% behind the same scrim. The other restoration candidates are not embedded.
 
 The source anime imagery and derivative restorations are not presented as original character designs or covered by the code's MIT license. No ownership or redistribution rights in the underlying character artwork are asserted.
+
+# Capri · Redline lightning
+
+`capri-redline.svg` reconstructs the narrow red lightning motif from the poster supplied by the user for the Capri / Project Capricorn theme. It was traced in VectorCraft; `capri-redline.vectorcraft` is its editable core-and-glow source, and `capri-redline-glow.svg` is the matching glow export. No character portrait or complete poster is embedded in the application.
+
+`capri-redline.png` and `capri-redline-glow.png` are transparent 4× exports embedded in the native renderer. The idle core is displayed at 35%; the glow export contains a 35% core and a 65% blurred red copy (VectorCraft blur radius 10), with no glare. Both states use the same fixed crop and placement. The underlying poster and derived motif are credited separately from, and excluded from, the code's MIT license; no ownership or redistribution rights in the underlying artwork are asserted.
+
+David & Lucy · Earthrise now uses 105% display scale and 35% opacity; the source photograph remains unchanged. Embrace and Blue Marble retain their previous art placement and opacity.

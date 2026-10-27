@@ -36,7 +36,7 @@ UserSettings LoadUserSettings() {
     DWORD theme = ReadNumber(key, L"Theme", 0);
     if (theme == 8) settings.theme = CandidateTheme::Lucy;
     else if (theme == static_cast<DWORD>(CandidateTheme::LucyFlow) || theme == static_cast<DWORD>(CandidateTheme::DavidLucyEmbrace) ||
-        theme == static_cast<DWORD>(CandidateTheme::Earth) ||
+        theme == static_cast<DWORD>(CandidateTheme::Earth) || theme == static_cast<DWORD>(CandidateTheme::Capri) ||
         (theme != 3 && theme != 4 && theme != 6 && theme <= static_cast<DWORD>(CandidateTheme::DavidLucy))) settings.theme = static_cast<CandidateTheme>(theme);
     RegCloseKey(key);
     return settings;

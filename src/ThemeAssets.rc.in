@@ -3,3 +3,5 @@
 305 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/lucy-original.jpg"
 306 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/lucy-hair-options/03-flowing.png"
 307 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/blue-marble-2012.jpg"
+308 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/capri-redline.png"
+309 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/capri-redline-glow.png"

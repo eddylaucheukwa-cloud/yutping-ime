@@ -19,6 +19,7 @@ HINSTANCE g_hInst = GetModuleHandleW(nullptr);
 static std::vector<CandidateCallback> requests;
 static std::vector<std::wstring> spellings;
 static int hidden = 0;
+static int typingNotifications = 0;
 static int lastHighlightedRow = 0;
 static std::vector<Candidate> cachedCandidates;
 bool GoogleInputAPI::TryCached(const std::wstring& spelling, CandidateResult& result) {
@@ -35,6 +36,8 @@ CandidateWindow::CandidateWindow() = default;
 CandidateWindow::~CandidateWindow() = default;
 bool CandidateWindow::RegisterClass(HINSTANCE) { return true; }
 void CandidateWindow::Hide() { ++hidden; }
+void CandidateWindow::SetTheme(CandidateTheme theme) { m_theme = theme; }
+void CandidateWindow::NotifyTyping() { ++typingNotifications; }
 void CandidateWindow::Show(const std::wstring&, const std::vector<Candidate>&, POINT,
     int, int, bool, bool, bool, int selectedRow) { lastHighlightedRow = selectedRow; }
 
@@ -231,6 +234,19 @@ public:
         ime._ReceiveCandidates();
     }
     static void Run() {
+        {
+            InputTest t;
+            const int before = typingNotifications;
+            t.Type("neiho");
+            Check(typingNotifications == before + 5, "accepted spelling letters notify the visual effect");
+            t.Key(VK_OEM_7); t.Key(VK_BACK);
+            Check(typingNotifications == before + 7, "separator and Backspace notify the visual effect");
+            t.Result({{L"你好", L"nei hou", 5}, {L"你", L"nei", 3}});
+            t.Key(VK_DOWN); t.Key(VK_UP); t.Key(VK_RIGHT); t.Key(VK_LEFT);
+            Check(typingNotifications == before + 7, "query results, paging and row selection do not trigger glow");
+            t.Key(VK_ESCAPE);
+            Check(typingNotifications == before + 7, "cancel does not trigger glow");
+        }
         {
             InputTest t;
             const auto before = requests.size();
