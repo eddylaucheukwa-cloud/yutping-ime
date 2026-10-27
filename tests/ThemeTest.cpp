@@ -239,6 +239,17 @@ public:
             const COLORREF selectedFill = GetPixel(dc, probeX, firstY);
             const COLORREF normalFill = GetPixel(dc, probeX, firstY + layout.row * 2);
             Check(selectedFill != normalFill, "selected candidate has a visible highlight");
+            if (preview.m_theme == CandidateTheme::Capri) {
+                DIBSECTION plate = {};
+                Check(GetObjectW(preview.m_plate, sizeof(plate), &plate) && plate.dsBm.bmBits, "Capri highlight exposes its alpha mask");
+                const auto* pixels = static_cast<const std::uint32_t*>(plate.dsBm.bmBits);
+                const int width = plate.dsBm.bmWidth, y = preview.m_plateSize.cy / 2;
+                Check((pixels[y * width + width / 2] >> 24) == 255,
+                    "Capri keeps the main text area fully opaque");
+                const unsigned rightAlpha = pixels[y * width + width - 1] >> 24;
+                Check(rightAlpha >= 140 && rightAlpha <= 142, "Capri right edge fades to Lucy's 55% opacity");
+                Check(pixels[y * width] == 0xff6aff88u, "Capri green afterimage stays fully opaque");
+            }
             if (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow)
             {
                 const COLORREF plateStart = GetPixel(dc, layout.content.left + 9, firstY);

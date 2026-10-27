@@ -624,7 +624,7 @@ CandidateWindow::~CandidateWindow() {
 }
 
 // The highlighted row: a chamfered plate. Lucy's uses her hair gradient and fades left to right;
-// David & Lucy and Capri use solid plates with a sharp contrasting afterimage down-left.
+// Capri fades only on the right; David & Lucy stays solid. Both have a sharp afterimage down-left.
 // Built once per theme, then one AlphaBlend per paint.
 void CandidateWindow::DrawSelectionPlate(HDC dc, int left, int top, int width, int height, COLORREF solid) {
     if (width <= 0 || height <= 0) return;
@@ -655,9 +655,11 @@ void CandidateWindow::DrawSelectionPlate(HDC dc, int left, int top, int width, i
                 std::uint32_t pixel = 0;
                 if (inside(x - pad, y)) {
                     const float t = (x - pad + .5f) / width;
-                    pixel = IsLucyTheme(m_theme) ? premultiply(GradientColor(kLucyHair, kLucyPlateStops, 5, t),
-                        static_cast<unsigned>((kPlateAlphaLeft + (kPlateAlphaRight - kPlateAlphaLeft) * t) * 255 + .5f)) :
-                        premultiply(solid, 255);
+                    // Keep Capri's text area opaque; let the right-hand end reveal the lightning.
+                    const float fade = m_theme == CandidateTheme::Capri ? (std::clamp)((t - .60f) / .40f, 0.f, 1.f) : t;
+                    const unsigned alpha = IsLucyTheme(m_theme) || m_theme == CandidateTheme::Capri ?
+                        static_cast<unsigned>((kPlateAlphaLeft + (kPlateAlphaRight - kPlateAlphaLeft) * fade) * 255 + .5f) : 255;
+                    pixel = premultiply(IsLucyTheme(m_theme) ? GradientColor(kLucyHair, kLucyPlateStops, 5, t) : solid, alpha);
                 } else if (ghost && inside(x, y - pad)) {
                     pixel = shadow;
                 }
