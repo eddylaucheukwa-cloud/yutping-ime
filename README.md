@@ -80,7 +80,7 @@
 | David & Lucy · Earthrise | Earthrise 背景放大至 105%、不透明度 35%；輸入英文為 `#6AFF88` 綠色，最外框、英文細陰影與高亮左下殘影為 `#CD5EF2` 紫色 |
 | David & Lucy · Embrace | 擁抱人物 22%、大型地球照片 32%，背景延伸至頂欄及頁數欄；高亮與 Earthrise 相同 |
 | David & Lucy · Blue Marble | 與 Embrace 相同的大型地球，移除背景人物 |
-| Capri · Redline | `#FF005A` 紅色輸入英文、最外框及選字高亮（左側實色，右側逐漸淡至 55% 不透明度），配 `#6AFF88` 細綠字影、編號、頁碼與高亮殘影；背景為 VectorCraft 重構的紅色閃電，35% 不透明度，只有輸入時啟動 Glow |
+| Capri · Redline | `#FF005A` 紅色輸入英文、最外框及選字高亮（左側實色，右側逐漸淡至 35% 不透明度），配 `#6AFF88` 細綠字影、編號、頁碼與高亮殘影；背景為 VectorCraft 重構的紅色閃電，35% 不透明度，只有輸入時啟動 Glow |
 
 兩款 Lucy、三款 David & Lucy 及 Capri 共用同一套 Edgerunner 外框：四角削邊（視窗本身亦按削角裁切，角位透明）、內框四角同樣削邊、兩側刻度線、上下各一條長色帶；頂欄只顯示輸入的英文及游標，不顯示主題圖示；候選字編號沿用原有點陣（無反鋸齒）Consolas 字體及方框，選中時編號轉為綠色（Capri 編號始終為綠色）；頁尾只顯示頁碼，左右兩側仍可點擊翻頁，鍵盤 `-`／`=` 亦可。
 
@@ -94,7 +94,7 @@ David 主題、Neon Arcade 及 Paper & Ink 已移除；舊設定若選用這些�
 
 ### 本次更新
 
-- 新增 Capri · Redline：紅綠配色、重構閃電背景及僅打字時啟動的 Glow（無 Glare）；綠色字影收窄成貼近紅字右側的細邊；選字高亮右側參考 Lucy 淡至 55% 不透明度，左側文字區與綠色殘影保持實色。
+- 新增 Capri · Redline：紅綠配色、重構閃電背景及僅打字時啟動的 Glow（無 Glare）；綠色字影收窄成貼近紅字右側的細邊；選字高亮右側淡至 35% 不透明度，左側文字區與綠色殘影保持實色。
 - David & Lucy 及 Capri 的頁碼維持 `#6AFF88` 綠色。
 - David & Lucy 三款主題：更新綠紫配色、英文細陰影及紫色最外框；Earthrise 背景改為 105%／35%，小字配色同步調亮以保持清晰。
 - 主題名稱改為英文：System (match Windows)、Terminal、Game Boy、Lucy · Afterglow、Lucy · Flow、David & Lucy · Earthrise、David & Lucy · Embrace、David & Lucy · Blue Marble。

@@ -247,7 +247,7 @@ public:
                 Check((pixels[y * width + width / 2] >> 24) == 255,
                     "Capri keeps the main text area fully opaque");
                 const unsigned rightAlpha = pixels[y * width + width - 1] >> 24;
-                Check(rightAlpha >= 140 && rightAlpha <= 142, "Capri right edge fades to Lucy's 55% opacity");
+                Check(rightAlpha >= 89 && rightAlpha <= 91, "Capri right edge fades to 35% opacity");
                 Check(pixels[y * width] == 0xff6aff88u, "Capri green afterimage stays fully opaque");
             }
             if (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow)

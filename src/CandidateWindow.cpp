@@ -650,6 +650,7 @@ void CandidateWindow::DrawSelectionPlate(HDC dc, int left, int top, int width, i
             return x >= 0 && y >= 0 && x < width && y < height && !(x - (width - cut) > y || y - (height - cut) > x);
         };
         const std::uint32_t shadow = premultiply(ThemeChrome(m_theme).secondary, 255);
+        const float alphaRight = m_theme == CandidateTheme::Capri ? .35f : kPlateAlphaRight;
         for (int y = 0; y < fullHeight; ++y) {
             for (int x = 0; x < fullWidth; ++x) {
                 std::uint32_t pixel = 0;
@@ -658,7 +659,7 @@ void CandidateWindow::DrawSelectionPlate(HDC dc, int left, int top, int width, i
                     // Keep Capri's text area opaque; let the right-hand end reveal the lightning.
                     const float fade = m_theme == CandidateTheme::Capri ? (std::clamp)((t - .60f) / .40f, 0.f, 1.f) : t;
                     const unsigned alpha = IsLucyTheme(m_theme) || m_theme == CandidateTheme::Capri ?
-                        static_cast<unsigned>((kPlateAlphaLeft + (kPlateAlphaRight - kPlateAlphaLeft) * fade) * 255 + .5f) : 255;
+                        static_cast<unsigned>((kPlateAlphaLeft + (alphaRight - kPlateAlphaLeft) * fade) * 255 + .5f) : 255;
                     pixel = premultiply(IsLucyTheme(m_theme) ? GradientColor(kLucyHair, kLucyPlateStops, 5, t) : solid, alpha);
                 } else if (ghost && inside(x, y - pad)) {
                     pixel = shadow;
