@@ -239,16 +239,21 @@ public:
             const COLORREF selectedFill = GetPixel(dc, probeX, firstY);
             const COLORREF normalFill = GetPixel(dc, probeX, firstY + layout.row * 2);
             Check(selectedFill != normalFill, "selected candidate has a visible highlight");
-            if (preview.m_theme == CandidateTheme::Capri) {
+            if (preview.m_theme == CandidateTheme::Capri || preview.m_theme == CandidateTheme::DavidLucy ||
+                preview.m_theme == CandidateTheme::DavidLucyEmbrace || preview.m_theme == CandidateTheme::Earth) {
+                const bool capri = preview.m_theme == CandidateTheme::Capri;
                 DIBSECTION plate = {};
-                Check(GetObjectW(preview.m_plate, sizeof(plate), &plate) && plate.dsBm.bmBits, "Capri highlight exposes its alpha mask");
+                Check(GetObjectW(preview.m_plate, sizeof(plate), &plate) && plate.dsBm.bmBits, "highlight exposes its alpha mask");
                 const auto* pixels = static_cast<const std::uint32_t*>(plate.dsBm.bmBits);
                 const int width = plate.dsBm.bmWidth, y = preview.m_plateSize.cy / 2;
-                Check((pixels[y * width + width / 2] >> 24) == 255,
-                    "Capri keeps the main text area fully opaque");
+                Check((pixels[y * width + 3] >> 24) == 255, "highlight starts fully opaque beside the number");
+                const unsigned middleAlpha = pixels[y * width + width / 2] >> 24;
+                Check(capri ? middleAlpha == 255 : middleAlpha >= 197 && middleAlpha <= 200,
+                    "Capri keeps its text area opaque; David & Lucy follows Lucy's continuous opacity fade");
                 const unsigned rightAlpha = pixels[y * width + width - 1] >> 24;
-                Check(rightAlpha >= 89 && rightAlpha <= 91, "Capri right edge fades to 35% opacity");
-                Check(pixels[y * width] == 0xff6aff88u, "Capri green afterimage stays fully opaque");
+                Check(capri ? rightAlpha >= 89 && rightAlpha <= 91 : rightAlpha >= 140 && rightAlpha <= 142,
+                    "Capri fades to 35%; all David & Lucy variants fade to Lucy's 55%");
+                Check(pixels[y * width] == (capri ? 0xff6aff88u : 0xffcd5ef2u), "afterimages stay fully opaque in their original colour");
             }
             if (preview.m_theme == CandidateTheme::Lucy || preview.m_theme == CandidateTheme::LucyFlow)
             {
